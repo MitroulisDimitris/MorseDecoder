@@ -9,10 +9,39 @@ package com.morsedecoder.core.model
  * for, and later drives the re-lock guard telemetry.
  */
 class KalmanUnit(u0: Double, p0: Double) {
-    var unitMs: Double = u0
+    companion object {
+        /**
+         * Hard sanity ceiling on sending speed. Nothing above this is Morse — the
+         * calibrated band tops out at 40 WPM (FR-5.7) and even machine-sent CW does
+         * not reach 60. Without a bound the tracker runs away on incoherent input:
+         * a short unit makes the glitch gate (0.3 units) short, which admits more
+         * noise blips as marks, which shortens the unit further. That feedback loop
+         * is what put 100+ WPM on the readout while listening to an empty room.
+         */
+        const val MAX_WPM = 60.0
+        const val MIN_UNIT_MS = 1200.0 / MAX_WPM   // 20 ms
+
+        /** Lower speed bound; 2 WPM is far below anything sendable by hand. */
+        const val MIN_WPM = 2.0
+        const val MAX_UNIT_MS = 1200.0 / MIN_WPM   // 600 ms
+    }
+
+    var unitMs: Double = u0.coerceIn(MIN_UNIT_MS, MAX_UNIT_MS)
         private set
     var variance: Double = p0
         private set
+
+    /**
+     * True when the estimate is being held off the speed ceiling rather than measured.
+     * A clamped unit is not an observation, so callers report it as "no estimate"
+     * rather than as 60 WPM.
+     */
+    var atSpeedCeiling: Boolean = false
+        private set
+
+    init {
+        atSpeedCeiling = u0 < MIN_UNIT_MS
+    }
 
     /** FR-9.5 pin-WPM: a frozen tracker ignores all evidence until unpinned. */
     var frozen: Boolean = false
@@ -27,14 +56,19 @@ class KalmanUnit(u0: Double, p0: Double) {
     fun update(measurementMs: Double, measurementVar: Double) {
         if (frozen) return
         val k = variance / (variance + measurementVar)
-        unitMs += k * (measurementMs - unitMs)
+        clampUnit(unitMs + k * (measurementMs - unitMs))
         variance *= (1.0 - k)
     }
 
     /** Manual override (FR-9.5): set the unit directly with high confidence. */
     fun overrideTo(newUnitMs: Double) {
-        unitMs = newUnitMs
-        variance = (0.05 * newUnitMs) * (0.05 * newUnitMs)
+        clampUnit(newUnitMs)
+        variance = (0.05 * unitMs) * (0.05 * unitMs)
+    }
+
+    private fun clampUnit(candidateMs: Double) {
+        atSpeedCeiling = candidateMs < MIN_UNIT_MS
+        unitMs = candidateMs.coerceIn(MIN_UNIT_MS, MAX_UNIT_MS)
     }
 
     /**

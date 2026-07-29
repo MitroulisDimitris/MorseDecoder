@@ -55,6 +55,14 @@ class LiveDecoderEngine(
         val relockMinDistHz: Double = 40.0,
         val mainsVetoHz: Double = 5.0,     // FR-2.5
         val mainsOverride: Boolean = false,
+
+        // ---- Schmitt keying thresholds, as a fraction of the floor..peak envelope span.
+        // The manual dB bias (FR-9.5) scales these, and the clamps bound how far it can
+        // move them — which is what makes the control's travel finite and showable.
+        val thresholdOnFraction: Double = 0.50,
+        val thresholdOffFraction: Double = 0.25,
+        val thresholdOnMinFraction: Double = 0.05,
+        val thresholdOnMaxFraction: Double = 0.95,
         /** p95/p20 envelope spread below which the low-signal state holds (FR-3.7). */
         val keyingSpreadRatio: Double = 15.0,
         val floorWindowMs: Double = 10_000.0, // FR-3.1: long vs the slowest element
@@ -68,6 +76,30 @@ class LiveDecoderEngine(
         val relockScoreMargin: Double = 1.5,    // FR-2.10.3
         val bootstrapMinMarks: Int = 8,
         val commitHorizonChars: Int = 2,        // NFR-2 Viterbi horizon
+
+        // ---- Output gate (P-4 honest failure / FR-5.8) -------------------------------
+        // Suppresses character emission when the signal does not fit a coherent Morse
+        // timing model — this is what stops ambient room sound from decoding as garbage.
+        //
+        // These four numbers are the primary tunables. `fitQuality` is modelFitQuality,
+        // a 0..1 score (1.0 = a clean, well-separated dot/dash two-cluster fit). To
+        // calibrate against the real world: run real recordings and ambient/noise clips,
+        // read `fitQuality` off the engine, and set the two thresholds between the value
+        // genuine hand-sent code sustains and the value ambient noise produces. The gap
+        // between suppress/resume is a deliberate hysteresis dead-band so output does not
+        // flicker on a momentary dip. Counts are in marks (elements), never seconds, so
+        // silence can never move the gate — consistent with the re-lock guards.
+        /** Master switch. false = emit raw regardless of fit (for A/B against real metrics). */
+        val outputGateEnabled: Boolean = true,
+        /** fitQuality at or below which a mark counts toward suppression. */
+        val emitFitSuppressBelow: Double = 0.35,
+        /** fitQuality at or above which a mark counts toward resuming. Must be > suppress. */
+        val emitFitResumeAbove: Double = 0.55,
+        /** consecutive poor-fit marks before emission is suppressed. */
+        val emitSuppressAfterMarks: Int = 6,
+        /** consecutive good-fit marks before emission resumes. */
+        val emitResumeAfterMarks: Int = 3,
+        // ------------------------------------------------------------------------------
     )
 
     enum class LockState { SEARCHING, ACQUIRING, LOCKED, DEGRADED }
@@ -86,14 +118,79 @@ class LiveDecoderEngine(
     var snrDb = 0.0; private set
     var fitQuality = 1.0; private set
     var lowSignal = false; private set
+    /**
+     * FR-5.8/P-4: true when the fit-quality output gate is holding characters back
+     * because the recent signal does not fit a coherent Morse timing model (e.g. ambient
+     * room sound). Distinct from [lowSignal], which is a loudness/SNR problem.
+     */
+    var outputSuppressed = false; private set
+    private var poorFitStreak = 0
+    private var goodFitStreak = 0
+
+    // Debug: a rolling window of the fit values the gate actually judged (ready marks
+    // only, so the neutral pre-ready 1.0 does not pollute it). Feeds the on-device
+    // fitQuality readout used to calibrate the gate thresholds against real audio.
+    private val fitLog = DoubleArray(64)
+    private var fitLogCount = 0
+    private var fitLogIdx = 0
+    /** Snapshot of recent per-mark fit values, oldest-to-newest order not guaranteed. */
+    fun recentFits(): DoubleArray = fitLog.copyOf(fitLogCount)
+    /** The gate thresholds in force, exposed so the debug readout can mark them. */
+    val gateSuppressBelow: Double get() = cfg.emitFitSuppressBelow
+    val gateResumeAbove: Double get() = cfg.emitFitResumeAbove
     var pinned = false                     // FR-2.6
     /** FR-9.5: manual WPM pin. Null = automatic. */
     var pinnedWpm: Double? = null; private set
-    /** FR-9.5: manual Schmitt threshold bias in dB (positive = less sensitive). */
+
+    /**
+     * FR-9.5: manual Schmitt threshold bias in dB (positive = less sensitive). Clamped
+     * to the range over which it actually moves the threshold — past [thresholdDbMin]
+     * the on-fraction clamp swallows the change, so a control that kept counting down
+     * would be lying about having an effect.
+     */
     var thresholdAdjustDb: Double = 0.0
+        set(value) {
+            field = value.coerceIn(thresholdDbMin, thresholdDbMax)
+        }
+
+    /** Lowest bias that still lowers the threshold; below it the clamp binds. */
+    val thresholdDbMin: Double
+        get() = 10.0 * log10(cfg.thresholdOnMinFraction / cfg.thresholdOnFraction)
+
+    /** Highest bias that still raises the threshold. */
+    val thresholdDbMax: Double
+        get() = 10.0 * log10(cfg.thresholdOnMaxFraction / cfg.thresholdOnFraction)
+
+    // ---- keying-threshold telemetry (FR-9.5 aiming aid) --------------------------------
+    // All three are heights on the same scale the spectrum strip uses for its bars:
+    // decibels above the signal's own noise floor, normalised over a 30 dB range. The
+    // strip's floor is the FFT band median and these use the envelope floor, so this is a
+    // comparison of headroom-above-noise, not of absolute levels — which is exactly the
+    // question the control answers: is the threshold under the tone, and how much room is
+    // left below it?
+    /** Current keying threshold. */
+    var thresholdNorm = 0f; private set
+    /** Where the threshold would sit at [thresholdDbMin] — the floor of the control. */
+    var thresholdMinNorm = 0f; private set
+    /** Current envelope level at the locked tone. */
+    var envelopeNorm = 0f; private set
     var lockedSinceMs = 0.0; private set
     val elapsedLockMs: Double get() = if (lockState >= LockState.LOCKED) nowMs() - lockedSinceMs else 0.0
-    val wpm: Double? get() = kalman?.wpm
+
+    /**
+     * Estimated sending speed, or null when there is no usable estimate. A tracker
+     * pinned against the [KalmanUnit.MAX_WPM] ceiling is reporting a clamp, not a
+     * measurement, so it reads as "no estimate" rather than as a suspiciously round
+     * 60 WPM — the readout must never show a speed the decoder does not believe.
+     */
+    val wpm: Double? get() = kalman?.let { if (it.atSpeedCeiling) null else it.wpm }
+
+    /**
+     * P-4 honest failure: the input implies a speed above [KalmanUnit.MAX_WPM], which no
+     * sender produces. Either a bootstrap was thrown out for it or a live tracker is being
+     * held off the ceiling; [wpm] reads as nothing in both cases, and this says why.
+     */
+    val speedImplausible: Boolean get() = kalman?.atSpeedCeiling ?: bootstrapTooFast
     val candidates: List<Double>
         get() = candidateList.filter { nowMs() - it.firstSeenMs >= cfg.candidateSustainMs }
             .sortedByDescending { it.ratio }
@@ -142,6 +239,8 @@ class LiveDecoderEngine(
     private var decoder: RobustTimingDecoder? = null
     private var drained = 0
     private val bootstrapRuns = ArrayList<FrontEnd.Run>()
+    /** Last bootstrap was discarded for implying a speed above the ceiling. */
+    private var bootstrapTooFast = false
     private var needResync = true          // FR-4.2: discard a partial leading character
     private val obsFit = ObservationFit()
     private var poorElements = 0
@@ -303,11 +402,21 @@ class LiveDecoderEngine(
             refreshDegraded()
         }
         snrDb = 10.0 * log10(max(spread, 1e-9))
-        if (lowSignal) return // FR-3.7: the whole response — no compensation
 
         val bias = Math.pow(10.0, thresholdAdjustDb / 10.0) // FR-9.5 manual threshold
-        val onThr = floor + (0.50 * bias).coerceIn(0.05, 0.95) * (peak - floor)
-        val offThr = floor + (0.25 * bias).coerceIn(0.02, 0.90) * (peak - floor)
+        val onFraction = (cfg.thresholdOnFraction * bias)
+            .coerceIn(cfg.thresholdOnMinFraction, cfg.thresholdOnMaxFraction)
+        val onThr = floor + onFraction * (peak - floor)
+        val offThr = floor + (cfg.thresholdOffFraction * bias).coerceIn(0.02, 0.90) * (peak - floor)
+
+        // Published before the low-signal bail-out: when nothing is decoding, where the
+        // threshold sits relative to the signal is precisely what the user needs to see.
+        thresholdNorm = normAboveFloor(onThr, floor)
+        thresholdMinNorm = normAboveFloor(floor + cfg.thresholdOnMinFraction * (peak - floor), floor)
+        envelopeNorm = normAboveFloor(e, floor)
+
+        if (lowSignal) return // FR-3.7: the whole response — no compensation
+
         val newState = if (keyState) e > offThr else e > onThr
         if (newState != keyState) {
             val startMs = runStartSample * 1000.0 / sampleRate
@@ -369,10 +478,39 @@ class LiveDecoderEngine(
             if (run.isMark) {
                 obsFit.add(ln(run.durationMs / k.unitMs))
                 fitQuality = obsFit.value()
+                if (obsFit.ready) {
+                    fitLog[fitLogIdx] = fitQuality
+                    fitLogIdx = (fitLogIdx + 1) % fitLog.size
+                    if (fitLogCount < fitLog.size) fitLogCount++
+                }
                 refreshDegraded()
             }
         }
         if (obsFit.ready && fitQuality < cfg.relockFitThreshold) poorElements++ else poorElements = 0
+
+        // Output gate (P-4 / FR-5.8): only judge once the observation window is ready —
+        // fitQuality is a neutral 1.0 before then, which must not be read as "coherent".
+        //
+        // fitQuality is noisy on incoherent input (random windows occasionally split into
+        // two clusters and read high), so a single good mark must NOT clear the poor
+        // count — only a sustained *run* of good-fit marks does. That run is also what
+        // lifts suppression. Clean code holds a long good run and never suppresses; ambient
+        // noise cannot sustain the run, so it clamps and stays clamped.
+        if (cfg.outputGateEnabled && obsFit.ready) {
+            if (fitQuality >= cfg.emitFitResumeAbove) {
+                goodFitStreak++
+                if (goodFitStreak >= cfg.emitResumeAfterMarks) {
+                    poorFitStreak = 0
+                    outputSuppressed = false
+                }
+            } else {
+                goodFitStreak = 0
+                if (fitQuality <= cfg.emitFitSuppressBelow) {
+                    poorFitStreak++
+                    if (poorFitStreak >= cfg.emitSuppressAfterMarks) outputSuppressed = true
+                }
+            }
+        }
 
         val dec = decoder
         if (dec == null) {
@@ -399,10 +537,15 @@ class LiveDecoderEngine(
             if (n2 > 0) c2 = s2 / n2
         }
         val u0 = kotlin.math.exp(c1)
-        if (u0 < 15.0 || u0 > 500.0) {
+        // A bootstrap implying a speed above the sanity ceiling is not a slow sender we
+        // mis-measured — it is noise that happened to cluster. Reject it outright rather
+        // than seeding a tracker that will then defend the wrong unit (see KalmanUnit).
+        if (u0 < KalmanUnit.MIN_UNIT_MS || u0 > 500.0) {
+            bootstrapTooFast = u0 < KalmanUnit.MIN_UNIT_MS
             bootstrapRuns.clear() // junk; keep listening
             return
         }
+        bootstrapTooFast = false
         val dashOffset = if (c2 - c1 >= ln(1.8)) c2 - c1 else ln(3.0)
         val k = KalmanUnit(u0, (0.25 * u0) * (0.25 * u0))
         val mm = GaussianMixture.of(doubleArrayOf(0.0, dashOffset), 0.25)
@@ -426,6 +569,10 @@ class LiveDecoderEngine(
         val dec = decoder ?: return
         while (drained < dec.output.size) {
             val ch = dec.output[drained++]
+            // P-4: while the fit gate is suppressing, incoherent characters are dropped
+            // here — never emitted, so the append-only transcript (P-2) is untouched; the
+            // present-tense principle (P-5) makes a never-shown character a non-event.
+            if (cfg.outputGateEnabled && outputSuppressed) continue
             transcript.add(ch)
             events.add(Event.CharDecoded(ch))
         }
@@ -497,7 +644,7 @@ class LiveDecoderEngine(
         val snap = FloatArray(spectrumBins)
         for (b in power.indices) {
             val bin = (b * spectrumBins / power.size).coerceAtMost(spectrumBins - 1)
-            val v = (ln(max(power[b], 1e-30) / floor) / ln(1000.0)).coerceIn(0.0, 1.0).toFloat()
+            val v = normAboveFloor(power[b], floor)
             if (v > snap[bin]) snap[bin] = v
         }
         spectrum = snap
@@ -595,9 +742,15 @@ class LiveDecoderEngine(
             decoder = null
         }
         bootstrapRuns.clear()
+        bootstrapTooFast = false
         obsFit.clear()
         fitQuality = 1.0
         poorElements = 0
+        outputSuppressed = false
+        poorFitStreak = 0
+        goodFitStreak = 0
+        fitLogCount = 0
+        fitLogIdx = 0
         needResync = true
         candidateList.clear()
         lockState = LockState.LOCKED
@@ -608,6 +761,9 @@ class LiveDecoderEngine(
 
     private fun resetSignalPath() {
         envRing.clear()
+        thresholdNorm = 0f
+        thresholdMinNorm = 0f
+        envelopeNorm = 0f
         pendingRuns.clear()
         keyState = false
         runStartSample = totalSamples
@@ -640,6 +796,14 @@ class LiveDecoderEngine(
         val d60 = abs(f - 60.0 * Math.round(f / 60.0))
         return d50 <= cfg.mainsVetoHz || d60 <= cfg.mainsVetoHz
     }
+
+    /**
+     * The one level scale the UI reads: decibels above a noise floor, normalised over a
+     * 30 dB range. Spectrum bars and keying-threshold lines both go through here, which
+     * is what lets them be drawn on the same axis and compared.
+     */
+    private fun normAboveFloor(value: Double, floor: Double): Float =
+        (ln(max(value, 1e-30) / max(floor, 1e-30)) / ln(1000.0)).coerceIn(0.0, 1.0).toFloat()
 
     private fun structuralMarkMix() = GaussianMixture.of(doubleArrayOf(0.0, ln(3.0)), 0.3)
     private fun structuralGapMix() = GaussianMixture.of(doubleArrayOf(0.0, ln(3.0), ln(7.0)), 0.3)

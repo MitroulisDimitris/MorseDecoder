@@ -142,3 +142,27 @@ heroic compensation.
 
 This is P-4. A decoder that produces plausible-looking output from unusable input is
 worse than one that says "I can't hear this."
+
+---
+
+## D-11 — 60 WPM is a hard ceiling on the estimator, not just a warning band
+
+D-1 already draws the line: above 60 WPM a dot is under 12 ms. The estimator has to
+enforce it, because the failure is self-reinforcing rather than self-correcting.
+
+The glitch gate scales with the estimated unit — marks under 0.3 units are discarded as
+impulse debris. So a unit estimate that drifts short also *shortens the gate*, which
+admits shorter noise blips as real marks, which pulls the estimate shorter again. On
+ambient room sound the loop ran to 100+ WPM, a speed nothing sendable produces.
+
+Three enforcement points, all cheap:
+
+- a bootstrap implying more than 60 WPM is discarded outright, not seeded — it is noise
+  that happened to cluster, not a fast sender that was mis-measured
+- the Kalman unit is clamped, so tracking cannot walk past the ceiling afterwards
+- while the clamp is holding, the speed readout shows **nothing**, not 60
+
+That last one is P-4. A clamped estimate is a bound being enforced, not a measurement,
+and displaying it as a number invites the user to trust it. The 5–40 WPM band of FR-5.7
+is a different statement — "outside where we promise accuracy," decode anyway. This is
+"outside what physically exists," so there is nothing to report.

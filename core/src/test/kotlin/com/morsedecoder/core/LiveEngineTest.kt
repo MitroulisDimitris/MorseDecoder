@@ -4,6 +4,7 @@ import com.morsedecoder.core.live.LiveDecoderEngine
 import com.morsedecoder.core.live.LiveDecoderEngine.Event
 import com.morsedecoder.core.live.LiveDecoderEngine.LockState
 import com.morsedecoder.core.metrics.TextMetrics
+import com.morsedecoder.core.model.KalmanUnit
 import com.morsedecoder.core.synth.SyntheticMorseGenerator
 import com.morsedecoder.core.synth.SyntheticMorseGenerator.Config
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -234,6 +235,121 @@ class LiveEngineTest {
             overridden.lockState == LockState.LOCKED || overridden.lockState == LockState.DEGRADED
         ) { "override should allow the 600 Hz lock" }
         assertTrue(abs(overridden.toneHz - 600.0) < 10.0)
+    }
+
+    /**
+     * Ambient, non-Morse sound: a tone whose envelope switches on and off at random
+     * durations, so the mark distribution is broad and unimodal — no dot/dash structure.
+     * This is what a mic pointed at a noisy room produces. `modelFitQuality` stays low,
+     * and the output gate (P-4/FR-5.8) must hold characters back rather than emit garbage.
+     */
+    private fun ambientTone(seed: Long, seconds: Int = 25, envStep: Double = 0.03): FloatArray {
+        val rng = java.util.Random(seed)
+        val sr = 16_000
+        val out = FloatArray(seconds * sr)
+        // A dominant tone (so it locks) under a smooth random-walk envelope that crosses
+        // the keying thresholds at random — the mark durations never form dot/dash
+        // clusters. This is how a real noisy room looks, unlike clean binary keying.
+        // A larger [envStep] fluctuates faster, producing the very short bogus marks that
+        // drive the unit estimate toward implausible speeds.
+        var env = 0.25
+        for (i in out.indices) {
+            env += (rng.nextDouble() - 0.5) * envStep
+            env = env.coerceIn(0.0, 0.5)
+            out[i] = (env * sin(2.0 * PI * 685.0 * i / sr)).toFloat()
+        }
+        return out
+    }
+
+    @Test
+    fun `ambient non-Morse sound is gated, not decoded as garbage (P-4 FR-5-8)`() {
+        val ambient = ambientTone(seed = 71L)
+
+        val gated = LiveDecoderEngine()
+        feedInChunks(gated, ambient)
+        gated.finish()
+
+        // Same input with the gate switched off — the raw path this bug reported.
+        val raw = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(outputGateEnabled = false))
+        feedInChunks(raw, ambient)
+        raw.finish()
+
+        // Guard against a vacuous test: the raw path must actually emit garbage here.
+        assertTrue(raw.transcript.size > 10) {
+            "fixture did not exercise the bug; raw emitted only ${raw.transcript.size} chars"
+        }
+        // The gate must engage on incoherent input and hold it back.
+        assertTrue(gated.outputSuppressed) { "fit gate never engaged; fit=${gated.fitQuality}" }
+        assertTrue(gated.transcript.size <= raw.transcript.size / 4 + 2) {
+            "gate let through ${gated.transcript.size} of ${raw.transcript.size} raw chars"
+        }
+    }
+
+    /**
+     * Ambient noise used to drive the unit estimate down until the readout showed 100+
+     * WPM — a speed no sender produces. The glitch gate scales with the unit, so a short
+     * unit admits more noise as marks and shortens it further; the ceiling breaks that
+     * loop. A clamped estimate is not a measurement, so `wpm` reports null, not 60.
+     */
+    @Test
+    fun `speed estimate never exceeds the 60 WPM ceiling on ambient noise`() {
+        var ceilingHit = false
+        for (seed in longArrayOf(71L, 12L, 907L)) {
+            val engine = LiveDecoderEngine()
+            feedInChunks(engine, ambientTone(seed, envStep = 0.08))
+            engine.finish()
+            val reported = engine.wpm
+            assertTrue(reported == null || reported <= KalmanUnit.MAX_WPM) {
+                "seed $seed reported $reported WPM"
+            }
+            if (engine.speedImplausible) ceilingHit = true
+        }
+        // Guard against a vacuous test: this fixture must actually push past the ceiling,
+        // which is what put 100+ WPM on the readout before the clamp existed.
+        assertTrue(ceilingHit) { "fixture no longer drives the estimate past the ceiling" }
+    }
+
+    @Test
+    fun `a real 20 WPM stream is unaffected by the speed ceiling`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 20.0, toneHz = 612.0, seed = 41L)
+        )
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, gen.samples)
+        engine.finish()
+        val reported = engine.wpm
+        assertTrue(reported != null && abs(reported - 20.0) < 2.0) { "reported $reported WPM" }
+    }
+
+    /** The `thr` control's travel is finite; the setter must not accept values past it. */
+    @Test
+    fun `threshold adjust clamps to its usable range`() {
+        val engine = LiveDecoderEngine()
+        engine.thresholdAdjustDb = -50.0
+        assertEquals(engine.thresholdDbMin, engine.thresholdAdjustDb, 1e-9)
+        engine.thresholdAdjustDb = 50.0
+        assertEquals(engine.thresholdDbMax, engine.thresholdAdjustDb, 1e-9)
+    }
+
+    /**
+     * The threshold rules on the spectrum strip are only readable against the bars if the
+     * minimum sits at or below the live threshold and both stay on the 0..1 bar scale.
+     */
+    @Test
+    fun `threshold telemetry stays on the spectrum bar scale`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 18.0, toneHz = 700.0, seed = 3L)
+        )
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, gen.samples)
+        engine.finish()
+
+        assertTrue(engine.thresholdNorm in 0f..1f) { "thresholdNorm ${engine.thresholdNorm}" }
+        assertTrue(engine.thresholdMinNorm in 0f..1f) { "thresholdMinNorm ${engine.thresholdMinNorm}" }
+        assertTrue(engine.thresholdNorm > 0f) { "no threshold telemetry was published" }
+        assertTrue(engine.thresholdMinNorm <= engine.thresholdNorm + 1e-6) {
+            "minimum ${engine.thresholdMinNorm} sits above the live threshold ${engine.thresholdNorm}"
+        }
     }
 
     @Test
