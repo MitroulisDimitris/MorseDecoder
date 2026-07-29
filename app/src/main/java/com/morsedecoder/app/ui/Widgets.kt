@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -121,6 +122,13 @@ fun Sparkline(samples: List<Float>, p: Palette) {
 /**
  * Spectrum strip (FR-9.4): an aiming aid. The locked peak renders in accent with a
  * marker, qualified candidates in warning color.
+ *
+ * Two horizontal rules overlay the bars (FR-9.5): the keying threshold a tone must
+ * exceed to register as a mark, and — dashed — where that threshold sits when the `thr`
+ * control is turned all the way down. The gap between them is the sensitivity the user
+ * still has in hand; when they meet, the control is spent and a signal below the line
+ * is not going to be heard by turning `thr` down further. Both are plotted in the bars'
+ * own units (dB above the noise floor), so reading a line against a bar is meaningful.
  */
 @Composable
 fun SpectrumStrip(
@@ -129,6 +137,8 @@ fun SpectrumStrip(
     locked: Boolean,
     candidates: List<Double>,
     p: Palette,
+    thresholdNorm: Float = 0f,
+    thresholdMinNorm: Float = 0f,
 ) {
     Column(
         Modifier
@@ -170,6 +180,24 @@ fun SpectrumStrip(
                     size = Size((x1 - x0 - 1f).coerceAtLeast(1f), h),
                 )
             }
+            // Threshold rules, drawn over the bars on the bars' own vertical scale. The
+            // minimum goes down first so the live threshold stays legible where they meet.
+            fun yOf(norm: Float) = size.height - 2f - norm.coerceIn(0f, 1f) * (size.height - 8f)
+            if (thresholdMinNorm > 0f) {
+                drawLine(
+                    p.textMuted,
+                    Offset(0f, yOf(thresholdMinNorm)), Offset(size.width, yOf(thresholdMinNorm)),
+                    strokeWidth = 1f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 5f)),
+                )
+            }
+            if (thresholdNorm > 0f) {
+                drawLine(
+                    p.warning,
+                    Offset(0f, yOf(thresholdNorm)), Offset(size.width, yOf(thresholdNorm)),
+                    strokeWidth = 1.5f,
+                )
+            }
             if (locked && lockHz > 0) {
                 val cx = xOf(lockHz)
                 val tri = Path().apply {
@@ -179,10 +207,18 @@ fun SpectrumStrip(
             }
             drawLine(p.borderStrong, Offset(0f, size.height - 1), Offset(size.width, size.height - 1), strokeWidth = 1f)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             for (f in listOf("300", "600", "1200")) {
                 Text(f, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = p.textMuted)
             }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("── thr", fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = p.warning)
+            Text("╌╌ thr min", fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = p.textMuted)
         }
     }
 }

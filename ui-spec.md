@@ -10,7 +10,7 @@ at a glance whether the decode can be trusted.
 
 1. **Status row** — listening indicator and lock pill with elapsed lock time
 2. **Readout grid** — WPM, tone, SNR, fit
-3. **Spectrum strip** — locked peak, candidates, frequency axis
+3. **Spectrum strip** — locked peak, candidates, frequency axis, keying threshold
 4. **Lock controls** — Re-lock, Pin, candidate chips
 5. **Transcript** — monospace, with annotations
 6. **Assist switches** — visibly off
@@ -22,6 +22,22 @@ at a glance whether the decode can be trusted.
 `modelFitQuality` is the only proxy the user has for "am I decoding the right thing." It
 sits alongside WPM and SNR. Green above ~0.8, amber below, red when the lock is
 `degraded`.
+
+### The threshold is drawn, not just numbered
+
+`thr ±N dB` on its own is unreadable — the user cannot tell whether turning it down will
+help. Two rules overlay the spectrum strip: the live keying threshold, and dashed beneath
+it, where that threshold sits with the control turned all the way down. The gap between
+them is the sensitivity still in hand. When they meet, the control is spent, and a tone
+below the line is not going to be recovered by turning `thr` down further — which is the
+moment to move the phone rather than keep tapping. The steppers grey out at both ends for
+the same reason: a control that keeps counting while the internal clamp swallows the
+change is lying about having an effect.
+
+Both rules are plotted in the bars' own units — decibels above the signal's own noise
+floor, over a 30 dB range. The bars measure against the FFT band floor and the rules
+against the envelope floor, so this compares headroom, not absolute level. Headroom is
+the question being asked.
 
 ### The lock timer is doing real work
 

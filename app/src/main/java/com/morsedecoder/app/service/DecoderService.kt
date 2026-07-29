@@ -56,9 +56,27 @@ class DecoderService : Service() {
         val snrDb: Double = 0.0,
         val fitQuality: Double = 1.0,
         val lowSignal: Boolean = false,
+        val poorFit: Boolean = false,       // FR-5.8/P-4: fit gate is holding output back
+        /** P-4: input implies a speed above the 60 WPM ceiling, so no speed is shown. */
+        val speedImplausible: Boolean = false,
+        // Debug: fit-quality distribution over recent marks, for on-device gate tuning.
+        val fitP10: Double = 1.0,
+        val fitP50: Double = 1.0,
+        val fitP90: Double = 1.0,
+        val fitSamples: Int = 0,
+        val gateSuppressBelow: Double = 0.35,
+        val gateResumeAbove: Double = 0.55,
         val pinned: Boolean = false,
         val pinnedWpm: Double? = null,      // FR-9.5
         val thresholdDb: Double = 0.0,      // FR-9.5
+        // Travel limits of the thr control; placeholders until the engine publishes.
+        val thresholdDbMin: Double = -10.0,
+        val thresholdDbMax: Double = 2.79,
+        // Keying threshold drawn on the spectrum strip (FR-9.4/9.5), in the same
+        // dB-above-noise-floor units as the bars.
+        val thresholdNorm: Float = 0f,
+        val thresholdMinNorm: Float = 0f,
+        val envelopeNorm: Float = 0f,
         val elapsedLockMs: Double = 0.0,
         val candidates: List<Double> = emptyList(),
         val bluetoothMic: Boolean = false,  // FR-1.5
@@ -151,6 +169,14 @@ class DecoderService : Service() {
             block(engine)
             publish()
         }
+    }
+
+    /** Debug: nearest-rank percentile of the recent fit window; 1.0 (neutral) when empty. */
+    private fun percentile(xs: DoubleArray, p: Double): Double {
+        if (xs.isEmpty()) return 1.0
+        val sorted = xs.sortedArray()
+        val idx = (p * (sorted.size - 1)).toInt().coerceIn(0, sorted.size - 1)
+        return sorted[idx]
     }
 
     /** User-initiated pause of the live mic (distinct from FR-1.6 focus loss). */
@@ -255,6 +281,7 @@ class DecoderService : Service() {
         }
         while (txItems.size > maxTranscriptItems) txItems.removeAt(0)
 
+        val fits = engine.recentFits()
         val prev = state.value
         state.value = prev.copy(
             listening = true,
@@ -264,9 +291,22 @@ class DecoderService : Service() {
             snrDb = engine.snrDb,
             fitQuality = engine.fitQuality,
             lowSignal = engine.lowSignal,
+            poorFit = engine.outputSuppressed,
+            speedImplausible = engine.speedImplausible,
+            fitP10 = percentile(fits, 0.10),
+            fitP50 = percentile(fits, 0.50),
+            fitP90 = percentile(fits, 0.90),
+            fitSamples = fits.size,
+            gateSuppressBelow = engine.gateSuppressBelow,
+            gateResumeAbove = engine.gateResumeAbove,
             pinned = engine.pinned,
             pinnedWpm = engine.pinnedWpm,
             thresholdDb = engine.thresholdAdjustDb,
+            thresholdDbMin = engine.thresholdDbMin,
+            thresholdDbMax = engine.thresholdDbMax,
+            thresholdNorm = engine.thresholdNorm,
+            thresholdMinNorm = engine.thresholdMinNorm,
+            envelopeNorm = engine.envelopeNorm,
             elapsedLockMs = engine.elapsedLockMs,
             candidates = engine.candidates,
             bluetoothMic = mic?.isBluetoothScoRoute() ?: false,
@@ -364,7 +404,9 @@ class DecoderService : Service() {
         }
         wakeLock?.release()
         decodeExecutor.shutdown()
-        state.value = state.value.copy(listening = false, paused = false)
+        // Stop returns to the idle screen (import a file, or start listening again), so
+        // the pause flags must not survive into it and re-arm on the next session.
+        state.value = state.value.copy(listening = false, paused = false, userPaused = false)
         instance = null
         super.onDestroy()
     }

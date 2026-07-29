@@ -107,6 +107,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Process-scoped so the launch auto-start fires once per app start. Activity recreation
+ * (rotation, theme change) must not restart a session the user stopped, so this cannot
+ * live in `remember` or in saved instance state.
+ */
+private var autoStartAttempted = false
+
 @Composable
 private fun MainScreen(p: Palette) {
     val state by DecoderService.stateFlow.collectAsState()
@@ -174,6 +181,28 @@ private fun MainScreen(p: Palette) {
         }
     }
 
+    // Listening is the default mode: the app opens straight into it rather than making
+    // the user tap through an idle screen to reach the thing it exists to do. Stop drops
+    // back to the idle screen, which is where a file gets imported instead.
+    //
+    // The guard is process-scoped, not remembered: a rotation must not re-start a session
+    // the user deliberately stopped, and neither must returning to a stopped screen.
+    val startListening = {
+        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        val missing = needed.any {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing) permissionLauncher.launch(needed.toTypedArray())
+        else DecoderService.start(context)
+    }
+    LaunchedEffect(Unit) {
+        if (!autoStartAttempted) {
+            autoStartAttempted = true
+            if (!state.listening) startListening()
+        }
+    }
+
     val scroll = rememberScrollState()
     LaunchedEffect(state.transcript.size) { scroll.animateScrollTo(scroll.maxValue) }
 
@@ -188,15 +217,7 @@ private fun MainScreen(p: Palette) {
 
         if (!state.listening) {
             IdleControls(p, showRationale,
-                onListen = {
-                    val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
-                    if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
-                    val missing = needed.any {
-                        ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-                    }
-                    if (missing) permissionLauncher.launch(needed.toTypedArray())
-                    else DecoderService.start(context)
-                },
+                onListen = startListening,
                 onImport = { importLauncher.launch(arrayOf("audio/*")) })
             fileResultText?.let {
                 Text("file decode", color = p.textMuted, fontSize = 11.sp, letterSpacing = 0.5.sp)
@@ -247,11 +268,43 @@ private fun MainScreen(p: Palette) {
             )
         }
 
-        // 3. spectrum strip (FR-9.4)
+        // debug: fitQuality distribution over recent marks, for calibrating the output
+        // gate thresholds against real audio (compare p10/p50/p90 to the gate band).
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(p.surface1, RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text("fit", fontSize = 10.sp, color = p.textMuted, fontFamily = FontFamily.Monospace)
+            Text(
+                "p10 %.2f  p50 %.2f  p90 %.2f  n%d".format(
+                    state.fitP10, state.fitP50, state.fitP90, state.fitSamples
+                ),
+                fontSize = 10.sp, color = p.textSecondary, fontFamily = FontFamily.Monospace,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "gate %.2f–%.2f".format(state.gateSuppressBelow, state.gateResumeAbove),
+                fontSize = 10.sp, color = p.textMuted, fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                if (state.poorFit) "paused" else "emit",
+                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                color = if (state.poorFit) p.warning else p.success,
+            )
+        }
+
+        // 3. spectrum strip (FR-9.4) with the keying threshold and its lower travel
+        //    limit overlaid (FR-9.5) — see SpectrumStrip for why they share an axis
         SpectrumStrip(
             state.spectrum, state.toneHz,
             state.lockState == LockState.LOCKED || state.lockState == LockState.DEGRADED,
             state.candidates, p,
+            thresholdNorm = state.thresholdNorm,
+            thresholdMinNorm = state.thresholdMinNorm,
         )
 
         // 4. lock controls — Re-lock and Pin are separate on purpose (FR-9.9) and hold a
@@ -309,17 +362,24 @@ private fun MainScreen(p: Palette) {
                 }
             }
             Spacer(Modifier.weight(1f))
-            Text("thr", fontSize = 11.sp, color = p.textMuted)
-            TextButton(onClick = { DecoderService.adjustThreshold(state.thresholdDb - 1.0) }) {
-                Text("−", fontSize = 13.sp, color = p.textSecondary)
-            }
+            // The control's travel is finite — past either end the internal clamp
+            // swallows the change — so the steppers grey out there rather than counting
+            // on with no effect. The dashed rule on the spectrum strip is the "−" end.
+            val atMin = state.thresholdDb <= state.thresholdDbMin + 0.5
+            val atMax = state.thresholdDb >= state.thresholdDbMax - 0.5
+            Text("thr", fontSize = 11.sp, color = p.warning)
+            TextButton(
+                onClick = { DecoderService.adjustThreshold(state.thresholdDb - 1.0) },
+                enabled = !atMin,
+            ) { Text("−", fontSize = 13.sp, color = if (atMin) p.textMuted else p.textSecondary) }
             Text(
                 "%+.0f dB".format(state.thresholdDb),
                 fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = p.textSecondary,
             )
-            TextButton(onClick = { DecoderService.adjustThreshold(state.thresholdDb + 1.0) }) {
-                Text("+", fontSize = 13.sp, color = p.textSecondary)
-            }
+            TextButton(
+                onClick = { DecoderService.adjustThreshold(state.thresholdDb + 1.0) },
+                enabled = !atMax,
+            ) { Text("+", fontSize = 13.sp, color = if (atMax) p.textMuted else p.textSecondary) }
         }
 
         // warnings (FR-9.7) — these replace output rather than decorating it (P-4)
@@ -328,8 +388,16 @@ private fun MainScreen(p: Palette) {
         if (state.lowSignal) Banner(
             "Low signal — decoding stopped (weak signal or competing audio)", p.bgDanger, p.danger
         )
+        if (state.poorFit && !state.lowSignal) Banner(
+            "Signal doesn't match a Morse timing pattern — decoding paused (ambient noise?)",
+            p.bgWarning, p.warning,
+        )
         if (state.bluetoothMic) Banner("Bluetooth microphone — decode quality degraded", p.bgWarning, p.warning)
         if (outOfRange) Banner("Outside calibrated range (5–40 WPM) — accuracy targets void", p.bgWarning, p.warning)
+        if (state.speedImplausible) Banner(
+            "Signal implies over 60 WPM — no sender does that, so no speed is reported",
+            p.bgWarning, p.warning,
+        )
         state.error?.let { Banner(it, p.bgDanger, p.danger) }
 
         // 5. transcript (FR-9.1: autoscroll, tap-to-copy)
@@ -414,6 +482,10 @@ private fun MainScreen(p: Palette) {
     }
 }
 
+/**
+ * The idle screen — where Stop lands. Listening is the launch default, so the reason to
+ * be here is almost always to decode a file instead; Import leads, Listen restarts.
+ */
 @Composable
 private fun IdleControls(p: Palette, showRationale: Boolean, onListen: () -> Unit, onImport: () -> Unit) {
     if (showRationale) {
@@ -424,8 +496,8 @@ private fun IdleControls(p: Palette, showRationale: Boolean, onListen: () -> Uni
         )
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onListen) { Text("Listen") }
-        OutlinedButton(onClick = onImport) { Text("Import file") }
+        Button(onClick = onImport) { Text("Import file") }
+        OutlinedButton(onClick = onListen) { Text("Listen") }
     }
 }
 
