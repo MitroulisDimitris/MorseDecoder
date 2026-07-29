@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morse decoder — main screen draft</title>
+<style>
+:root {
+  --surface-0: #f5f4ef;
+  --surface-1: #eceae3;
+  --surface-2: #ffffff;
+  --border: rgba(0,0,0,.12);
+  --border-strong: rgba(0,0,0,.22);
+  --text-primary: #26261f;
+  --text-secondary: #5f5e5a;
+  --text-muted: #8a8985;
+  --text-accent: #185fa5;
+  --text-success: #3b6d11;
+  --text-warning: #854f0b;
+  --text-danger: #a32d2d;
+  --bg-success: #eaf3de;
+  --bg-warning: #faeeda;
+  --bg-danger: #fcebeb;
+  --radius: 8px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #16160f;
+    --surface-1: #22221c;
+    --surface-2: #2c2c26;
+    --border: rgba(255,255,255,.14);
+    --border-strong: rgba(255,255,255,.26);
+    --text-primary: #e6e4da;
+    --text-secondary: #b4b2a9;
+    --text-muted: #888780;
+    --text-accent: #85b7eb;
+    --text-success: #97c459;
+    --text-warning: #ef9f27;
+    --text-danger: #f09595;
+    --bg-success: #27500a;
+    --bg-warning: #633806;
+    --bg-danger: #791f1f;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 2rem 1rem;
+  background: var(--surface-0);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  display: flex; justify-content: center;
+}
+.phone {
+  width: 340px; background: var(--surface-2);
+  border: .5px solid var(--border); border-radius: 12px; padding: 14px;
+}
+.statusrow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-success); display: inline-block; }
+.lockpill { font-family: var(--font-mono); font-size: 11px; background: var(--bg-success); color: var(--text-success); padding: 3px 9px; border-radius: var(--radius); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.metric { background: var(--surface-1); border-radius: var(--radius); padding: 9px 11px; }
+.mlabel { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; }
+.mvalue { font-family: var(--font-mono); font-size: 21px; }
+.munit { font-size: 12px; color: var(--text-muted); }
+.spectrum { border: .5px solid var(--border); border-radius: var(--radius); padding: 8px; margin-bottom: 10px; }
+.lockrow { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; }
+button {
+  flex: 1; font-size: 13px; padding: 7px 0; font-family: inherit;
+  background: transparent; color: var(--text-primary);
+  border: .5px solid var(--border-strong); border-radius: var(--radius); cursor: pointer;
+}
+button:hover { background: var(--surface-1); }
+.chip {
+  font-family: var(--font-mono); font-size: 11px; border: .5px solid var(--border-strong);
+  color: var(--text-accent); padding: 6px 9px; border-radius: var(--radius); cursor: pointer;
+  white-space: nowrap;
+}
+.section { border-top: .5px solid var(--border); padding-top: 11px; }
+.slabel { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; margin-bottom: 7px; }
+.transcript { font-family: var(--font-mono); font-size: 13px; line-height: 1.85; }
+.unk { background: var(--bg-warning); color: var(--text-warning); border-radius: 3px; padding: 0 3px; }
+.lowconf { border-bottom: 1.5px dotted var(--text-warning); }
+.hh { font-size: 11px; background: var(--bg-danger); color: var(--text-danger); padding: 2px 6px; border-radius: 3px; }
+.relock { color: var(--text-accent); font-weight: 500; cursor: pointer; }
+.assists { display: flex; gap: 6px; margin-top: 13px; padding-top: 11px; border-top: .5px solid var(--border); }
+.assist { flex: 1; text-align: center; font-size: 11px; border: .5px solid var(--border); color: var(--text-muted); padding: 5px 0; border-radius: var(--radius); }
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="statusrow">
+    <div style="display:flex;align-items:center;gap:7px">
+      <span class="dot"></span>
+      <span style="font-size:13px;color:var(--text-secondary)">Listening</span>
+    </div>
+    <span class="lockpill">LOCKED 04:12</span>
+  </div>
+
+  <div class="grid">
+    <div class="metric"><div class="mlabel">wpm</div><div class="mvalue">19.4</div></div>
+    <div class="metric"><div class="mlabel">tone</div><div class="mvalue">612<span class="munit"> Hz</span></div></div>
+    <div class="metric"><div class="mlabel">snr</div><div class="mvalue">14<span class="munit"> dB</span></div></div>
+    <div class="metric"><div class="mlabel">fit</div><div class="mvalue" style="color:var(--text-success)">0.91</div></div>
+  </div>
+
+  <div class="spectrum">
+    <svg width="100%" viewBox="0 0 312 78" role="img">
+      <title>Spectrum strip</title>
+      <desc>Frequency spectrum with a strong locked peak at 612 Hz and one weaker candidate at 745 Hz.</desc>
+      <g fill="var(--text-muted)">
+        <rect x="6" y="53" width="6" height="5"/><rect x="16" y="50" width="6" height="8"/>
+        <rect x="26" y="54" width="6" height="4"/><rect x="36" y="49" width="6" height="9"/>
+        <rect x="46" y="52" width="6" height="6"/><rect x="56" y="53" width="6" height="5"/>
+        <rect x="66" y="48" width="6" height="10"/><rect x="76" y="52" width="6" height="6"/>
+        <rect x="86" y="54" width="6" height="4"/><rect x="96" y="51" width="6" height="7"/>
+        <rect x="106" y="53" width="6" height="5"/><rect x="116" y="49" width="6" height="9"/>
+        <rect x="126" y="51" width="6" height="7"/><rect x="136" y="47" width="6" height="11"/>
+        <rect x="156" y="45" width="6" height="13"/><rect x="166" y="51" width="6" height="7"/>
+        <rect x="176" y="53" width="6" height="5"/><rect x="186" y="52" width="6" height="6"/>
+        <rect x="196" y="54" width="6" height="4"/><rect x="206" y="50" width="6" height="8"/>
+        <rect x="216" y="52" width="6" height="6"/><rect x="226" y="53" width="6" height="5"/>
+        <rect x="236" y="49" width="6" height="9"/><rect x="256" y="48" width="6" height="10"/>
+        <rect x="266" y="52" width="6" height="6"/><rect x="276" y="54" width="6" height="4"/>
+        <rect x="286" y="51" width="6" height="7"/><rect x="296" y="53" width="6" height="5"/>
+      </g>
+      <rect x="146" y="20" width="6" height="38" fill="var(--text-accent)"/>
+      <rect x="246" y="38" width="6" height="20" fill="var(--text-warning)"/>
+      <line x1="6" y1="58" x2="306" y2="58" stroke="var(--border-strong)" stroke-width="0.5"/>
+      <path d="M145 14 L153 14 L149 19 Z" fill="var(--text-accent)"/>
+      <text x="6" y="72" font-size="11" fill="var(--text-muted)" font-family="var(--font-mono)">300</text>
+      <text x="140" y="72" font-size="11" fill="var(--text-muted)" font-family="var(--font-mono)">600</text>
+      <text x="272" y="72" font-size="11" fill="var(--text-muted)" font-family="var(--font-mono)">1200</text>
+    </svg>
+  </div>
+
+  <div class="lockrow">
+    <button>Re-lock</button>
+    <button>Pin</button>
+    <span class="chip">&#8644; 745 Hz</span>
+  </div>
+
+  <div class="section">
+    <div class="slabel">transcript</div>
+    <div class="transcript">
+      CQ CQ DE SV1ABC K<br>
+      GM ES TNX FER CALL <span class="unk">&lt;?&gt;</span> UR RST 5N9<br>
+      <span class="lowconf">R</span>R QTH ATHENS <span class="hh">HH</span> QTH PIRAEUS<br>
+      <span class="relock" title="612 Hz &#8594; 745 Hz at 04:48">|</span> R FB OM 73 SK
+    </div>
+  </div>
+
+  <div class="assists">
+    <span class="assist">lexicon &middot; off</span>
+    <span class="assist">cut nums &middot; off</span>
+  </div>
+
+</div>
+</body>
+</html>
