@@ -83,8 +83,7 @@ class DecoderService : Service() {
         val spectrum: FloatArray = FloatArray(0),   // FR-9.4
         val wpmTrace: List<Float> = emptyList(),    // FR-9.3
         val transcript: List<TxItem> = emptyList(),
-        // FR-7: assist switches, all off by default (P-3); master kill switch (FR-7.4)
-        val assistsMaster: Boolean = true,
+        // FR-7: assist switches, independent, all off by default (P-3)
         val lexiconOn: Boolean = false,
         val cutNumbersOn: Boolean = false,
         val error: String? = null,
@@ -115,10 +114,9 @@ class DecoderService : Service() {
         fun pinWpm(wpm: Double?) = instance?.onDecodeThread { it.pinWpm(wpm) }
         fun adjustThreshold(db: Double) = instance?.onDecodeThread { it.thresholdAdjustDb = db }
 
-        // ---- assists (FR-7): each individually toggleable, master kills all ----
+        // ---- assists (FR-7): independent switches, both off by default (P-3) ----
         fun setLexicon(on: Boolean) = instance?.setAssists(lexicon = on)
         fun setCutNumbers(on: Boolean) = instance?.setAssists(cutNumbers = on)
-        fun setAssistsMaster(on: Boolean) = instance?.setAssists(master = on)
 
         /** The live session for export (FR-10); null when the service is not running. */
         fun currentSession(): SessionRecorder? = instance?.recorder
@@ -144,24 +142,19 @@ class DecoderService : Service() {
     var recorder: SessionRecorder? = null
         private set
 
-    // Assist state (FR-7). Master defaults ON (pass-through); individuals OFF (P-3).
-    private var assistsMaster = true
+    // Assist state (FR-7), both off by default (P-3).
     private var lexiconOn = false
     private var cutNumbersOn = false
 
     fun setAssists(
-        master: Boolean = assistsMaster,
         lexicon: Boolean = lexiconOn,
         cutNumbers: Boolean = cutNumbersOn,
     ) {
-        assistsMaster = master
         lexiconOn = lexicon
         cutNumbersOn = cutNumbers
-        val effectiveLexicon = assistsMaster && lexiconOn
-        val effectiveCut = assistsMaster && cutNumbersOn
-        recorder?.assistLexicon = effectiveLexicon
-        recorder?.assistCutNumbers = effectiveCut
-        onDecodeThread { it.setLexiconEnabled(effectiveLexicon) }
+        recorder?.assistLexicon = lexiconOn
+        recorder?.assistCutNumbers = cutNumbersOn
+        onDecodeThread { it.setLexiconEnabled(lexiconOn) }
     }
 
     fun onDecodeThread(block: (LiveDecoderEngine) -> Unit) {
@@ -223,8 +216,8 @@ class DecoderService : Service() {
             sourceType = "microphone",
             sourceName = null,
         ).also {
-            it.assistLexicon = assistsMaster && lexiconOn
-            it.assistCutNumbers = assistsMaster && cutNumbersOn
+            it.assistLexicon = lexiconOn
+            it.assistCutNumbers = cutNumbersOn
         }
         val capture = MicCapture(
             onAudio = { samples, count ->
@@ -313,7 +306,6 @@ class DecoderService : Service() {
             spectrum = engine.spectrum,
             wpmTrace = wpmTrace.toList(),
             transcript = displayItems(),
-            assistsMaster = assistsMaster,
             lexiconOn = lexiconOn,
             cutNumbersOn = cutNumbersOn,
         )
@@ -325,7 +317,7 @@ class DecoderService : Service() {
      * untouched, so switching the assist off shows the raw decode again (P-1/P-3).
      */
     private fun displayItems(): List<TxItem> {
-        if (!(assistsMaster && cutNumbersOn)) return txItems.toList()
+        if (!cutNumbersOn) return txItems.toList()
         val out = ArrayList<TxItem>(txItems.size)
         val word = ArrayList<TxItem.Ch>()
         fun flushWord() {

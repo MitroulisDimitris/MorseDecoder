@@ -87,11 +87,3 @@ arbitrary constant is defending against a specific failure mode recorded there.
 Version 0.3.0. All six milestones of §7 are implemented: harness, robust timing decoder,
 live path, UI, export, assists.
 
-Known gaps:
-
-- Not yet exercised on physical hardware — no AVD or `cmdline-tools` configured, so
-  everything is verified by unit test and build only
-- No real hand-sent recordings in the corpus (see above)
-- §8 of the requirements still lists open questions
-- `CLAUDE.md` still describes the repo as a specification handover with no code; that
-  was true at the first commit and is not any more

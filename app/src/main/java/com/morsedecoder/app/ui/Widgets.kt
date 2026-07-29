@@ -238,29 +238,20 @@ fun Banner(text: String, bg: Color, fg: Color) {
 
 /**
  * Assist switches (FR-9.6/P-3): state lives in the label (`lexicon · off`), not in a
- * toggle position that must be interpreted. The master switch (FR-7.4) kills all
- * assists at once; individuals keep their setting underneath it.
+ * toggle position that must be interpreted. Each assist is independent — see D-12 for
+ * why the FR-7.4 master switch is not here.
  */
 @Composable
 fun AssistRow(
-    master: Boolean,
     lexicon: Boolean,
     cutNumbers: Boolean,
-    onMaster: (Boolean) -> Unit,
     onLexicon: (Boolean) -> Unit,
     onCutNumbers: (Boolean) -> Unit,
     p: Palette,
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        AssistChip("lexicon", lexicon && master, enabled = master, p, Modifier.weight(1f)) {
-            onLexicon(!lexicon)
-        }
-        AssistChip("cut nums", cutNumbers && master, enabled = master, p, Modifier.weight(1f)) {
-            onCutNumbers(!cutNumbers)
-        }
-        AssistChip("assists", master, enabled = true, p, Modifier.weight(1f)) {
-            onMaster(!master)
-        }
+        AssistChip("lexicon", lexicon, p, Modifier.weight(1f)) { onLexicon(!lexicon) }
+        AssistChip("cut nums", cutNumbers, p, Modifier.weight(1f)) { onCutNumbers(!cutNumbers) }
     }
 }
 
@@ -268,7 +259,6 @@ fun AssistRow(
 private fun AssistChip(
     name: String,
     on: Boolean,
-    enabled: Boolean,
     p: Palette,
     modifier: Modifier,
     onClick: () -> Unit,
@@ -279,7 +269,7 @@ private fun AssistChip(
         fontSize = 11.sp,
         modifier = modifier
             .border(0.5.dp, if (on) p.accent else p.border, RoundedCornerShape(8.dp))
-            .clickable(enabled = enabled) { onClick() }
+            .clickable { onClick() }
             .padding(vertical = 5.dp),
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
     )

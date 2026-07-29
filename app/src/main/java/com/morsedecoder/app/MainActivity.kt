@@ -395,7 +395,7 @@ private fun MainScreen(p: Palette) {
         if (state.bluetoothMic) Banner("Bluetooth microphone — decode quality degraded", p.bgWarning, p.warning)
         if (outOfRange) Banner("Outside calibrated range (5–40 WPM) — accuracy targets void", p.bgWarning, p.warning)
         if (state.speedImplausible) Banner(
-            "Signal implies over 60 WPM — no sender does that, so no speed is reported",
+            "Signal > 60 WPM. Decoding Stopped ",
             p.bgWarning, p.warning,
         )
         state.error?.let { Banner(it, p.bgDanger, p.danger) }
@@ -433,10 +433,8 @@ private fun MainScreen(p: Palette) {
 
         // 6. assist switches (FR-9.6) — visibly off by default (P-3)
         AssistRow(
-            master = state.assistsMaster,
             lexicon = state.lexiconOn,
             cutNumbers = state.cutNumbersOn,
-            onMaster = { DecoderService.setAssistsMaster(it) },
             onLexicon = { DecoderService.setLexicon(it) },
             onCutNumbers = { DecoderService.setCutNumbers(it) },
             p = p,

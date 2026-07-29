@@ -166,3 +166,20 @@ That last one is P-4. A clamped estimate is a bound being enforced, not a measur
 and displaying it as a number invites the user to trust it. The 5–40 WPM band of FR-5.7
 is a different statement — "outside where we promise accuracy," decode anyway. This is
 "outside what physically exists," so there is nothing to report.
+
+---
+
+## D-12 — No assist master switch; FR-7.4 is not implemented
+
+FR-7.4 asks for a global switch that disables all assists at once. With two assists that
+both default off, it earns nothing: the only way to reach a state where the master does
+something is to turn an assist on first, and then turning that assist back off is the
+same gesture. It also carried a trap — the master defaulted *on* while the individuals
+defaulted off, so the one chip reading `assists · on` sat next to two reading `off`,
+which is exactly the misreading P-3 exists to prevent.
+
+Each assist is now independently toggled, and nothing else changes: the export schema
+already recorded only the effective per-assist booleans, so `:core` is untouched.
+
+Revisit if the assist count grows. A master switch is worth having over five of these;
+it is not worth having over two.
