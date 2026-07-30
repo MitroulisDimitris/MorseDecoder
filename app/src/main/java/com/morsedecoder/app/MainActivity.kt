@@ -54,11 +54,13 @@ import com.morsedecoder.app.ui.Banner
 import com.morsedecoder.app.ui.MetricCard
 import com.morsedecoder.app.ui.Palette
 import com.morsedecoder.app.ui.Sparkline
+import com.morsedecoder.app.ui.SettingsScreen
 import com.morsedecoder.app.ui.SpectrumStrip
 import com.morsedecoder.app.ui.StatusRow
 import com.morsedecoder.app.ui.TranscriptView
 import com.morsedecoder.app.ui.decoderPalette
 import com.morsedecoder.app.ui.mmss
+import com.morsedecoder.core.decode.FrontEnd
 import com.morsedecoder.core.decode.MorseDecoder
 import com.morsedecoder.core.export.PlainTextTranscript
 import com.morsedecoder.core.live.LiveDecoderEngine.LockState
@@ -75,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Settings.load(this)
         setContent {
             val p = decoderPalette()
             val dark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -128,6 +131,8 @@ private fun MainScreen(p: Palette) {
     var wpmPinDialog by remember { mutableStateOf(false) }
     var exportSheet by remember { mutableStateOf(false) }
     var pendingSave by remember { mutableStateOf<String?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
+    val bandMaxHz by Settings.bandMaxHz.collectAsState()
 
     val saveTxtLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
@@ -163,7 +168,11 @@ private fun MainScreen(p: Palette) {
             fileResultText = withContext(Dispatchers.Default) {
                 try {
                     val source = AudioFileImporter.load(context, uri)
-                    val result = MorseDecoder().decodeFile(source)
+                    // Same search band as the live path (FR-2.1); read fresh rather than
+                    // captured, so a change made in settings applies to the next import.
+                    val result = MorseDecoder(
+                        FrontEnd(bandMaxHz = Settings.bandMaxHz.value)
+                    ).decodeFile(source)
                     buildString {
                         append(
                             "tone %.0f Hz · %.1f wpm · fit %.2f".format(
@@ -213,7 +222,25 @@ private fun MainScreen(p: Palette) {
         verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         // 1. status row
-        StatusRow(state.listening && !state.paused && !state.userPaused, state.lockState, state.elapsedLockMs, p)
+        StatusRow(
+            state.listening && !state.paused && !state.userPaused,
+            state.lockState, state.elapsedLockMs, p,
+            onSettings = { showSettings = true },
+        )
+
+        if (showSettings) {
+            SettingsScreen(
+                bandMinHz = Settings.BAND_MIN_HZ,
+                bandMaxHz = bandMaxHz,
+                bandMaxLowest = Settings.BAND_MAX_LOWEST,
+                bandMaxHighest = Settings.BAND_MAX_HIGHEST,
+                bandMaxStep = Settings.BAND_MAX_STEP,
+                onBandMaxHz = { Settings.setBandMaxHz(context, it) },
+                onBack = { showSettings = false },
+                p = p,
+            )
+            return@Column
+        }
 
         if (!state.listening) {
             IdleControls(p, showRationale,
@@ -305,6 +332,8 @@ private fun MainScreen(p: Palette) {
             state.candidates, p,
             thresholdNorm = state.thresholdNorm,
             thresholdMinNorm = state.thresholdMinNorm,
+            bandMinHz = state.bandMinHz,
+            bandMaxHz = state.bandMaxHz,
         )
 
         // 4. lock controls — Re-lock and Pin are separate on purpose (FR-9.9) and hold a

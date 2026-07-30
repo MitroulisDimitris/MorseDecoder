@@ -183,3 +183,70 @@ already recorded only the effective per-assist booleans, so `:core` is untouched
 
 Revisit if the assist count grows. A master switch is worth having over five of these;
 it is not worth having over two.
+
+---
+
+## D-13 — Search 300–2000 Hz, and pick peaks by keying rather than by power
+
+Two changes from one field report: a 72-second phone recording of real CW that the app
+could not decode at all. Measured, its tone sat at **1882 Hz**. FR-2.1 searched 300–1200,
+so the signal was never a candidate; the app locked the loudest thing it *could* see —
+room noise at 363 Hz — and reported 59 WPM of garbage.
+
+### The ceiling was never a physical limit
+
+Unlike the 5–40 WPM band (D-1), which follows from how fast a hand can form an element,
+1200 Hz followed from nothing. Sidetone pitch is operator preference, and a recording
+chain shifts nothing but adds its own resonances. 600–800 Hz is conventional; this
+recording was made by holding a phone to a small speaker and landed far higher.
+
+2000 Hz covers it with headroom, and the ceiling is now a user setting (FR-9.14) because
+no single value can be right for every recording chain. The 300 Hz floor stays fixed —
+below it is mains hum and handling noise, and nothing sends there.
+
+### Loudness was the wrong selection criterion
+
+Widening the band alone is not enough, and is arguably worse: more band means more
+non-Morse peaks to lose the lock to. In this recording a 2120 Hz component beat the real
+tone outright for the first 8 seconds.
+
+So peaks are now scored on **whether they are being keyed** — a p95/p20 envelope ratio
+plus a minimum number of on/off transitions — and the strongest *keyed* peak wins. This
+is the only property that distinguishes CW from every other narrowband signal; hum, data
+carriers and room tone are all steady. Two calibration notes, both learned the hard way
+against the real file:
+
+- **Amplitude spread alone is not enough.** A single noise burst against a quiet
+  background produces the same wide p95/p20 gap that keying does. Keying is *repeated*,
+  so a transition count is required as well.
+- **The ratio must be floored relative to its own scale.** Real recordings contain true
+  digital silence; p20 lands on exactly zero and an unguarded ratio explodes past 1e17,
+  which made silence score as the most strongly keyed thing in the band. A ratio against
+  zero is evidence of nothing.
+
+Measured separation on the real clip: the keyed carrier scores 465 at its 10th percentile
+over a 600 ms probe; the loudest unkeyed content never exceeds 33. The bar sits at 40.
+
+### A lock that decodes nothing is abandoned
+
+The screen only helps at the moment of acquisition, and a wrong lock made anyway was
+previously permanent: the re-lock guards count elements (D-7, rightly), but an unkeyed
+carrier produces no elements, so the counters never advance and the search never resumes.
+`LOCKED`, confident, decoding nothing, indefinitely — which is what the report described.
+
+So an unproven lock — one that has never emitted a character — is dropped after ~15 s, or
+after ~8 s if its frequency carries signal that is not keying. The invariant is that **a
+lock which has decoded a character is never dropped by these guards**; a working lock that
+later degrades remains FR-2.10's job.
+
+Gating on `lowSignal` instead was tried and is wrong: it is computed over a 10 s window,
+so it lags real silence by up to 10 s — long enough to trip a sweep counter mid-pause and
+break AC-9. "Has this lock ever produced anything" is the condition that actually
+separates the case worth protecting from the case worth abandoning.
+
+### What this did not fix
+
+The file-import path now decodes the clip (1881 Hz, 17.7 WPM, legible). The live path now
+*finds* the same tone, but decodes it far less well than the two-pass file path does —
+the streaming bootstrap is weaker on real fading hand-sent audio. That is a separate
+problem from tone selection and is the "real corpus" gap already recorded in §7.

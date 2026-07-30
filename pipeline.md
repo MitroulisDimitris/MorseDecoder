@@ -41,8 +41,16 @@ Samples arrive at 16 kHz into a ring buffer, sliced into overlapping ~10 ms wind
 a 2–5 ms hop. Everything downstream ticks at 200–500 Hz.
 
 **Tone lock** runs far slower than the frames themselves — roughly every 100 ms. Rolling
-FFT over 300–1200 Hz, peak pick, mains-harmonic veto, slow EMA. Once `f0` is known, each
-frame gets one Goertzel evaluation at that frequency: a single number, no full FFT.
+FFT over 300–2000 Hz (ceiling user-adjustable), peak pick, **keying screen**,
+mains-harmonic veto, slow EMA. Once `f0` is known, each frame gets one Goertzel
+evaluation at that frequency: a single number, no full FFT.
+
+The keying screen is what makes peak-picking trustworthy: candidates are scored on
+whether their envelope switches on and off, not on how loud they are, because the loudest
+narrowband thing in the band is often hum, a speaker resonance, or traffic. A lock on an
+unkeyed carrier is self-perpetuating — no elements flow, so the element-counted re-lock
+guards never advance — so a lock that never decodes anything is abandoned outright.
+See decisions.md D-13.
 
 A short median filter across frames precedes everything else. Static crashes and key
 clicks are one or two frames wide; real elements are dozens.

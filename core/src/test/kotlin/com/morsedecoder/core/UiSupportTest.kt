@@ -31,10 +31,19 @@ class UiSupportTest {
         feed(engine, gen.samples)
         val spectrum = engine.spectrum
         assertEquals(engine.spectrumBins, spectrum.size)
-        var maxBin = 0
-        for (b in spectrum.indices) if (spectrum[b] > spectrum[maxBin]) maxBin = b
-        val expected = ((612.0 - 300.0) / 900.0 * engine.spectrumBins).toInt()
-        assertTrue(abs(maxBin - expected) <= 2) { "peak bin $maxBin, expected ~$expected" }
+        // Derived from the engine's band rather than a hardcoded 300-1200: the ceiling
+        // is configurable now (D-13), and the strip's mapping follows it.
+        val span = engine.bandMaxHz - engine.bandMinHz
+        val expected = ((612.0 - engine.bandMinHz) / span * engine.spectrumBins).toInt()
+        // Asserted as "the tone's bin is among the tallest" rather than "argmax lands
+        // here": key-transition skirt energy saturates several bins on a noiseless tone,
+        // and a plain argmax then reports whichever saturated bin comes first. Being one
+        // of the tallest is the property the strip actually needs — it is what puts the
+        // lock marker over a tall bar.
+        val peak = spectrum.max()
+        assertTrue(spectrum[expected] >= peak - 0.05f) {
+            "bin $expected holds ${spectrum[expected]}, tallest is $peak"
+        }
     }
 
     @Test

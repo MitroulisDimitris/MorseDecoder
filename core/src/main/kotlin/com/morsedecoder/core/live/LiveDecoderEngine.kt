@@ -3,6 +3,7 @@ package com.morsedecoder.core.live
 import com.morsedecoder.core.decode.FrontEnd
 import com.morsedecoder.core.decode.RobustTimingDecoder
 import com.morsedecoder.core.dsp.Goertzel
+import com.morsedecoder.core.dsp.KeyingSpread
 import com.morsedecoder.core.dsp.RollingPercentiles
 import com.morsedecoder.core.dsp.Spectrum
 import com.morsedecoder.core.model.GaussianMixture
@@ -36,9 +37,38 @@ class LiveDecoderEngine(
         val hopMs: Double = 2.5,           // FR-2.7
         val sweepIntervalMs: Double = 100.0,
         val fftSize: Int = 4096,
-        val bandMinHz: Double = 300.0,     // FR-2.1
-        val bandMaxHz: Double = 1200.0,
+        val bandMinHz: Double = Spectrum.DEFAULT_BAND_MIN_HZ,  // FR-2.1
+        val bandMaxHz: Double = Spectrum.DEFAULT_BAND_MAX_HZ,
         val acquireSweeps: Int = 3,
+        /**
+         * Require a peak to be keyed before locking onto it (D-13). The loudest thing in
+         * the band is often not Morse, and a lock on an unkeyed carrier is a dead end:
+         * no elements flow, so the element-counted re-lock guards never fire and the
+         * search never resumes. Screening at acquisition is the only place this is cheap.
+         *
+         * false = select on power alone, the pre-D-13 behaviour, kept for A/B comparison.
+         */
+        val requireKeyingToLock: Boolean = true,
+        val lockKeyingSpread: Double = KeyingSpread.LOCK_MIN_SPREAD,
+        /** Audio probed when scoring a peak's keying. Must fit the ring. */
+        val keyingProbeMs: Double = 600.0,
+        // ---- Dead-end recovery (D-13) -------------------------------------------------
+        // Both guards below obey one invariant: **a lock that has decoded a character is
+        // never dropped by them.** A working lock that later degrades is the existing
+        // element-counted re-lock's job (FR-2.10); these two exist only for a lock that
+        // has never produced anything, which no other mechanism can correct — no elements
+        // flow, so the element counters never advance and the search never resumes. That
+        // is the silent failure the field report exhibited: LOCKED, confident, decoding
+        // nothing, indefinitely.
+        //
+        // The invariant is also what keeps AC-9 intact. Gating on `lowSignal` is *not*
+        // sufficient protection: it is computed over a 10 s window, so it lags real silence
+        // by up to 10 s — long enough for a sweep counter to trip mid-pause.
+        /** Consecutive sweeps an unproven lock may carry signal without keying. ~8 s. */
+        val unkeyedLockSweeps: Int = 80,
+        /** How long an unproven lock may hold at all. [Double.MAX_VALUE] disables it. */
+        val unprovenLockMs: Double = 15_000.0,
+        // -------------------------------------------------------------------------------
         val trackEmaAlpha: Double = 0.02,  // FR-2.3: slow, must not chase chirp
         val trackWindowHz: Double = 15.0,  // FR-2.4: hysteresis window
         /**
@@ -138,6 +168,17 @@ class LiveDecoderEngine(
     /** The gate thresholds in force, exposed so the debug readout can mark them. */
     val gateSuppressBelow: Double get() = cfg.emitFitSuppressBelow
     val gateResumeAbove: Double get() = cfg.emitFitResumeAbove
+    /**
+     * Search-band edges (FR-2.1), adjustable while running: the ceiling is a user setting
+     * because the right value depends on the recording chain, not on the decoder. Takes
+     * effect on the next sweep — no lock is lost, and a lock left outside the new band
+     * returns to SEARCHING rather than freezing where it can no longer be tracked.
+     */
+    var bandMinHz: Double = cfg.bandMinHz
+        set(value) { field = value.coerceIn(50.0, bandMaxHz - 100.0) }
+    var bandMaxHz: Double = cfg.bandMaxHz
+        set(value) { field = value.coerceIn(bandMinHz + 100.0, sampleRate / 2.0 - 100.0) }
+
     var pinned = false                     // FR-2.6
     /** FR-9.5: manual WPM pin. Null = automatic. */
     var pinnedWpm: Double? = null; private set
@@ -222,6 +263,13 @@ class LiveDecoderEngine(
     private var goertzel: Goertzel? = null
     private val envRing = RollingPercentiles((cfg.floorWindowMs / cfg.hopMs).toInt())
 
+    // Keying probe (D-13): the most recent audio, copied out of the ring so the shared
+    // KeyingSpread can score a candidate frequency. Allocated once — this runs per peak
+    // per sweep during acquisition.
+    private val probeSamples =
+        (cfg.keyingProbeMs * sampleRate / 1000.0).toInt().coerceAtMost(ringSize)
+    private val probeScratch = FloatArray(probeSamples)
+
     // acquisition
     private var acqFreq = 0.0
     private var acqHits = 0
@@ -245,6 +293,10 @@ class LiveDecoderEngine(
     private val obsFit = ObservationFit()
     private var poorElements = 0
     private var lastLockChangeMs = -1e12
+    /** Consecutive sweeps the current lock has carried signal without keying (D-13). */
+    private var unkeyedSweeps = 0
+    /** Characters emitted under the current lock — zero means it has proven nothing. */
+    private var charsSinceLock = 0
 
     private class Candidate(var freqHz: Double, val firstSeenMs: Double, var lastSeenMs: Double, var ratio: Double)
     private val candidateList = ArrayList<Candidate>()
@@ -285,11 +337,18 @@ class LiveDecoderEngine(
 
     // ---- manual controls ----
 
-    /** FR-2.11: manual re-lock, bypasses all guards. */
+    /**
+     * FR-2.11: manual re-lock, bypasses all guards. The keying screen is a preference
+     * here rather than a requirement — the user asked for a lock, so give them the best
+     * available one even if nothing in the band is currently keying.
+     */
     fun manualRelock(): Boolean {
         if (totalSamples < cfg.fftSize) return false
         val peaks = findPeaks()
-        val best = peaks.firstOrNull { allowedLockFreq(it.freqHz) } ?: return false
+        val allowed = peaks.filter { allowedLockFreq(it.freqHz) }
+        val best = allowed.firstOrNull { isKeyed(it.freqHz) }
+            ?: allowed.firstOrNull()
+            ?: return false
         if (lockState == LockState.LOCKED || lockState == LockState.DEGRADED) {
             switchLock(best.freqHz, RelockTrigger.MANUAL)
         } else {
@@ -574,6 +633,7 @@ class LiveDecoderEngine(
             // present-tense principle (P-5) makes a never-shown character a non-event.
             if (cfg.outputGateEnabled && outputSuppressed) continue
             transcript.add(ch)
+            charsSinceLock++
             events.add(Event.CharDecoded(ch))
         }
     }
@@ -584,7 +644,9 @@ class LiveDecoderEngine(
         val peaks = findPeaks()
         when (lockState) {
             LockState.SEARCHING -> {
-                val best = peaks.firstOrNull { allowedLockFreq(it.freqHz) }
+                // Strongest peak that is both allowed and keyed (D-13). Power alone would
+                // happily settle on hum or a speaker resonance and then never recover.
+                val best = peaks.firstOrNull { allowedLockFreq(it.freqHz) && isKeyed(it.freqHz) }
                 if (best != null) {
                     acqFreq = best.freqHz
                     acqHits = 1
@@ -602,6 +664,38 @@ class LiveDecoderEngine(
                 }
             }
             LockState.LOCKED, LockState.DEGRADED -> {
+                // The band ceiling is a live setting; a lock left outside it can no longer
+                // be tracked, so resume searching rather than sit on a frequency the
+                // sweep no longer looks at.
+                if (toneHz < bandMinHz || toneHz > bandMaxHz) {
+                    lockState = LockState.SEARCHING
+                    candidateList.clear()
+                    unkeyedSweeps = 0
+                    return
+                }
+                // Dead-end recovery (D-13), part two: a lock that has never decoded
+                // anything is not a lock worth keeping, however quiet its frequency is.
+                if (charsSinceLock == 0 && nowMs() - lockedSinceMs > cfg.unprovenLockMs) {
+                    lockState = LockState.SEARCHING
+                    candidateList.clear()
+                    unkeyedSweeps = 0
+                    return
+                }
+                // Dead-end recovery (D-13): signal present at the lock, but not keying.
+                // Only ever applied to a lock that has never decoded anything — see the
+                // invariant on [Config.unkeyedLockSweeps]. lowSignal alone is not enough
+                // protection here: it is computed over a 10 s window and so lags real
+                // silence by up to 10 s, which is long enough to trip this guard.
+                if (cfg.requireKeyingToLock && charsSinceLock == 0 && !lowSignal && !isKeyed(toneHz)) {
+                    if (++unkeyedSweeps >= cfg.unkeyedLockSweeps) {
+                        unkeyedSweeps = 0
+                        lockState = LockState.SEARCHING
+                        candidateList.clear()
+                        return
+                    }
+                } else {
+                    unkeyedSweeps = 0
+                }
                 // FR-2.3 slow EMA + FR-2.4 hysteresis: only a peak near the lock moves
                 // it, and never beyond the anchor clamp.
                 val near = peaks.filter { abs(it.freqHz - toneHz) <= cfg.trackWindowHz }
@@ -631,8 +725,8 @@ class LiveDecoderEngine(
         }
         Spectrum.fft(re, im)
         val binHz = sampleRate.toDouble() / n
-        val lo = (cfg.bandMinHz / binHz).toInt().coerceAtLeast(1)
-        val hi = (cfg.bandMaxHz / binHz).toInt().coerceAtMost(n / 2 - 2)
+        val lo = (bandMinHz / binHz).toInt().coerceAtLeast(1)
+        val hi = (bandMaxHz / binHz).toInt().coerceAtMost(n / 2 - 2)
         val power = DoubleArray(hi - lo + 1) { re[lo + it] * re[lo + it] + im[lo + it] * im[lo + it] }
 
         val sorted = power.copyOf()
@@ -663,6 +757,26 @@ class LiveDecoderEngine(
         return peaks.sortedByDescending { it.power }.take(8)
     }
 
+    /**
+     * D-13: is this frequency actually being keyed? Scored over the last [Config.keyingProbeMs]
+     * of audio. Returns false when there is not yet enough audio to tell, so acquisition
+     * waits for evidence instead of guessing — about half a second at startup.
+     */
+    private fun isKeyed(freqHz: Double): Boolean {
+        if (!cfg.requireKeyingToLock) return true
+        return keyingSpreadAt(freqHz) >= cfg.lockKeyingSpread
+    }
+
+    /** Envelope spread at [freqHz] over the most recent audio; 0.0 when too little exists. */
+    fun keyingSpreadAt(freqHz: Double): Double {
+        if (totalSamples < probeSamples) return 0.0
+        val start = totalSamples - probeSamples
+        for (i in 0 until probeSamples) {
+            probeScratch[i] = ring[((start + i) % ringSize).toInt()]
+        }
+        return KeyingSpread.of(probeScratch, sampleRate, freqHz)
+    }
+
     private fun updateCandidates(peaks: List<Peak>) {
         val now = nowMs()
         for (p in peaks) {
@@ -691,9 +805,12 @@ class LiveDecoderEngine(
         if (poorElements < cfg.relockPoorElements) return           // FR-2.10.1
         if (nowMs() - lastLockChangeMs < cfg.relockHoldoffMs) return // FR-2.10.4
         val lockScore = near?.ratio ?: 1.0
+        // An automatic re-lock must land on something keyed (D-13): moving the lock to
+        // another unkeyed carrier trades one dead end for another.
         val alt = peaks
             .filter { abs(it.freqHz - toneHz) >= cfg.relockMinDistHz && allowedLockFreq(it.freqHz) }
-            .maxByOrNull { it.ratio } ?: return
+            .sortedByDescending { it.ratio }
+            .firstOrNull { isKeyed(it.freqHz) } ?: return
         if (alt.ratio > lockScore * cfg.relockScoreMargin) {        // FR-2.10.3
             switchLock(alt.freqHz, RelockTrigger.AUTOMATIC)
         }
@@ -712,6 +829,8 @@ class LiveDecoderEngine(
         lockedSinceMs = nowMs()
         lastLockChangeMs = nowMs()
         needResync = true
+        unkeyedSweeps = 0
+        charsSinceLock = 0
     }
 
     private fun switchLock(toHz: Double, trigger: RelockTrigger) {
@@ -753,6 +872,8 @@ class LiveDecoderEngine(
         fitLogIdx = 0
         needResync = true
         candidateList.clear()
+        unkeyedSweeps = 0
+        charsSinceLock = 0
         lockState = LockState.LOCKED
         lockedSinceMs = nowMs()
         lastLockChangeMs = nowMs()

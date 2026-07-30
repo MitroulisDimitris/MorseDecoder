@@ -80,6 +80,9 @@ class DecoderService : Service() {
         val elapsedLockMs: Double = 0.0,
         val candidates: List<Double> = emptyList(),
         val bluetoothMic: Boolean = false,  // FR-1.5
+        // Search band in force (FR-2.1) — the spectrum strip's axis follows it.
+        val bandMinHz: Double = 300.0,
+        val bandMaxHz: Double = 2000.0,
         val spectrum: FloatArray = FloatArray(0),   // FR-9.4
         val wpmTrace: List<Float> = emptyList(),    // FR-9.3
         val transcript: List<TxItem> = emptyList(),
@@ -113,6 +116,9 @@ class DecoderService : Service() {
         fun selectCandidate(freqHz: Double) = instance?.onDecodeThread { it.selectCandidate(freqHz) }
         fun pinWpm(wpm: Double?) = instance?.onDecodeThread { it.pinWpm(wpm) }
         fun adjustThreshold(db: Double) = instance?.onDecodeThread { it.thresholdAdjustDb = db }
+
+        /** FR-2.1 band ceiling, live-adjustable from settings; no-op when not running. */
+        fun setBandMaxHz(hz: Double) = instance?.onDecodeThread { it.bandMaxHz = hz }
 
         // ---- assists (FR-7): independent switches, both off by default (P-3) ----
         fun setLexicon(on: Boolean) = instance?.setAssists(lexicon = on)
@@ -207,6 +213,10 @@ class DecoderService : Service() {
         requestAudioFocus()
 
         engine = LiveDecoderEngine()
+        // The band ceiling is a persisted user setting; a service restarted by the system
+        // (START_STICKY) must come back with it applied, not with the default.
+        com.morsedecoder.app.Settings.load(this)
+        engine.bandMaxHz = com.morsedecoder.app.Settings.bandMaxHz.value
         txItems.clear()
         wpmTrace.clear()
         eventsConsumed = 0
@@ -302,6 +312,8 @@ class DecoderService : Service() {
             envelopeNorm = engine.envelopeNorm,
             elapsedLockMs = engine.elapsedLockMs,
             candidates = engine.candidates,
+            bandMinHz = engine.bandMinHz,
+            bandMaxHz = engine.bandMaxHz,
             bluetoothMic = mic?.isBluetoothScoRoute() ?: false,
             spectrum = engine.spectrum,
             wpmTrace = wpmTrace.toList(),

@@ -72,7 +72,15 @@ with a principle here, the principle wins and the requirement is wrong.
 
 ### FR-2 — Tone detection and lock
 
-- **FR-2.1** Locate the carrier by rolling FFT peak search over 300–1200 Hz.
+- **FR-2.1** Locate the carrier by rolling FFT peak search over 300–2000 Hz. The ceiling
+  is a user setting (FR-9.14); the 300 Hz floor is fixed. See D-13 — the original
+  1200 Hz ceiling put real recordings permanently out of reach.
+- **FR-2.1a** Select among candidate peaks by **keying**, not by power: score each peak's
+  envelope and prefer one that is switching on and off. The loudest narrowband signal in
+  the band is frequently not Morse, and a lock on an unkeyed carrier decodes nothing.
+- **FR-2.1b** Abandon a lock that has never decoded a character (after ~15 s, or ~8 s if
+  its frequency carries signal that is not keying) and resume searching. A lock that has
+  decoded successfully is never abandoned this way — FR-2.10 governs that case.
 - **FR-2.2** Extract per-hop energy with a Goertzel filter locked to the tracked
   frequency.
 - **FR-2.3** Track frequency with a slow EMA. Adaptation must be slow enough not to
@@ -262,6 +270,12 @@ original raw decode remains inspectable.
   is empty when no candidate qualifies, so its appearance is itself meaningful.
 - **FR-9.13** Lock state and elapsed lock time displayed persistently, so the user can
   tell whether a stretch of garbage is a lock problem or bad sending.
+- **FR-9.14** A settings screen, reachable while idle and while listening, holding only
+  values that depend on the user's own equipment rather than on the signal. The tone
+  search-band ceiling (FR-2.1) is the first of these. Decoder thresholds are calibrated
+  against measurements and are deliberately **not** exposed — a user cannot be expected
+  to tune what was derived from data. Band changes apply to a running session without
+  losing the transcript.
 
 ### FR-10 — Export and persistence
 

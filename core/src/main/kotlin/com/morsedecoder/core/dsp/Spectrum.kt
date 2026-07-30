@@ -2,6 +2,7 @@ package com.morsedecoder.core.dsp
 
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -10,6 +11,18 @@ import kotlin.math.sin
  * live rolling search.
  */
 object Spectrum {
+
+    /**
+     * The search band (FR-2.1). One definition, shared by the file sweep and the live
+     * rolling search so the two can never disagree about where a tone may be found.
+     *
+     * The ceiling is not the 1200 Hz of the original spec. Sidetone is a matter of
+     * operator taste and recording chain, not physics: a phone recording of a small
+     * speaker measured 1882 Hz here, which the old ceiling put permanently out of reach.
+     * Users can raise it further in settings; see decisions.md D-13.
+     */
+    const val DEFAULT_BAND_MIN_HZ = 300.0
+    const val DEFAULT_BAND_MAX_HZ = 2000.0
 
     /** In-place iterative radix-2 complex FFT. Sizes must be powers of two. */
     fun fft(re: DoubleArray, im: DoubleArray) {
@@ -65,10 +78,67 @@ object Spectrum {
     fun estimateToneHz(
         samples: FloatArray,
         sampleRate: Int,
-        minHz: Double = 300.0,
-        maxHz: Double = 1200.0,
+        minHz: Double = DEFAULT_BAND_MIN_HZ,
+        maxHz: Double = DEFAULT_BAND_MAX_HZ,
         fftSize: Int = 4096,
     ): Double? {
+        val avg = averagePeriodogram(samples, fftSize) ?: return null
+        val binHz = sampleRate.toDouble() / fftSize
+        val lo = (minHz / binHz).toInt().coerceAtLeast(1)
+        val hi = (maxHz / binHz).toInt().coerceAtMost(avg.size - 2)
+        if (lo >= hi) return null
+        var peak = lo
+        for (b in lo..hi) if (avg[b] > avg[peak]) peak = b
+        return (peak + parabolicDelta(avg, peak)) * binHz
+    }
+
+    /**
+     * Every plausible tone in the band, strongest first — the input to keyed-carrier
+     * selection (see [com.morsedecoder.core.dsp.KeyingSpread]). Local spectral maxima
+     * that clear the band median, parabolically refined, deduplicated within [mergeHz]
+     * so one broad peak does not occupy every slot.
+     *
+     * Separate from [estimateToneHz] because the strongest peak and the right peak are
+     * not the same question, and the caller needs the shortlist to tell them apart.
+     */
+    fun candidateTones(
+        samples: FloatArray,
+        sampleRate: Int,
+        minHz: Double = DEFAULT_BAND_MIN_HZ,
+        maxHz: Double = DEFAULT_BAND_MAX_HZ,
+        fftSize: Int = 4096,
+        maxCount: Int = 6,
+        mergeHz: Double = 25.0,
+    ): DoubleArray {
+        val avg = averagePeriodogram(samples, fftSize) ?: return DoubleArray(0)
+        val binHz = sampleRate.toDouble() / fftSize
+        val lo = (minHz / binHz).toInt().coerceAtLeast(1)
+        val hi = (maxHz / binHz).toInt().coerceAtMost(avg.size - 2)
+        if (lo >= hi) return DoubleArray(0)
+
+        val band = avg.copyOfRange(lo, hi + 1)
+        val sorted = band.copyOf()
+        sorted.sort()
+        val floor = max(sorted[sorted.size / 2], 1e-18)
+
+        val peaks = ArrayList<Pair<Double, Double>>() // freq to power
+        for (b in lo + 1 until hi) {
+            if (avg[b] > floor * 3.0 && avg[b] >= avg[b - 1] && avg[b] >= avg[b + 1]) {
+                peaks.add(((b + parabolicDelta(avg, b)) * binHz) to avg[b])
+            }
+        }
+        peaks.sortByDescending { it.second }
+
+        val out = ArrayList<Double>(maxCount)
+        for ((f, _) in peaks) {
+            if (out.size >= maxCount) break
+            if (out.none { kotlin.math.abs(it - f) < mergeHz }) out.add(f)
+        }
+        return out.toDoubleArray()
+    }
+
+    /** Hann-windowed periodogram averaged across the whole signal. */
+    private fun averagePeriodogram(samples: FloatArray, fftSize: Int): DoubleArray? {
         if (samples.size < fftSize / 2) return null
         val hop = fftSize / 2
         val window = DoubleArray(fftSize) { 0.5 * (1.0 - cos(2.0 * PI * it / (fftSize - 1))) }
@@ -86,19 +156,17 @@ object Spectrum {
             start += hop
             if (start + fftSize > samples.size && frames > 0) break
         }
-        val binHz = sampleRate.toDouble() / fftSize
-        val lo = (minHz / binHz).toInt().coerceAtLeast(1)
-        val hi = (maxHz / binHz).toInt().coerceAtMost(avg.size - 2)
-        if (lo >= hi) return null
-        var peak = lo
-        for (b in lo..hi) if (avg[b] > avg[peak]) peak = b
-        // parabolic refinement on the log-power spectrum
+        return avg
+    }
+
+    /** Sub-bin peak refinement on the log-power spectrum. */
+    private fun parabolicDelta(avg: DoubleArray, peak: Int): Double {
+        if (peak <= 0 || peak >= avg.size - 1) return 0.0
         val a = ln(avg[peak - 1])
         val b = ln(avg[peak])
         val c = ln(avg[peak + 1])
         val denom = a - 2.0 * b + c
-        val delta = if (denom == 0.0) 0.0 else (0.5 * (a - c) / denom).coerceIn(-0.5, 0.5)
-        return (peak + delta) * binHz
+        return if (denom == 0.0) 0.0 else (0.5 * (a - c) / denom).coerceIn(-0.5, 0.5)
     }
 
     private fun ln(x: Double): Double = kotlin.math.ln(x.coerceAtLeast(1e-30))

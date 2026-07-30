@@ -29,9 +29,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.morsedecoder.core.live.LiveDecoderEngine.LockState
 
-/** Status row (FR-9.13): listening dot + lock pill with elapsed lock time. */
+/**
+ * Status row (FR-9.13): listening dot + lock pill with elapsed lock time, and the way in
+ * to settings. Settings lives here rather than in the control rows because it must be
+ * reachable while idle as well as while listening.
+ */
 @Composable
-fun StatusRow(listening: Boolean, lockState: LockState, elapsedMs: Double, p: Palette) {
+fun StatusRow(
+    listening: Boolean,
+    lockState: LockState,
+    elapsedMs: Double,
+    p: Palette,
+    onSettings: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -54,13 +64,22 @@ fun StatusRow(listening: Boolean, lockState: LockState, elapsedMs: Double, p: Pa
             LockState.ACQUIRING -> Triple("ACQUIRING", p.bgWarning, p.warning)
             LockState.SEARCHING -> Triple("SEARCHING", p.surface1, p.textMuted)
         }
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = fg,
-            modifier = Modifier
-                .background(bg, RoundedCornerShape(8.dp))
-                .padding(horizontal = 9.dp, vertical = 3.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label,
+                fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = fg,
+                modifier = Modifier
+                    .background(bg, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 9.dp, vertical = 3.dp),
+            )
+            Text(
+                "⚙",
+                fontSize = 15.sp, color = p.textMuted,
+                modifier = Modifier
+                    .clickable(onClick = onSettings)
+                    .padding(start = 8.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+            )
+        }
     }
 }
 
@@ -139,6 +158,8 @@ fun SpectrumStrip(
     p: Palette,
     thresholdNorm: Float = 0f,
     thresholdMinNorm: Float = 0f,
+    bandMinHz: Double = 300.0,
+    bandMaxHz: Double = 2000.0,
 ) {
     Column(
         Modifier
@@ -156,15 +177,17 @@ fun SpectrumStrip(
                 drawLine(p.borderStrong, Offset(0f, size.height - 1), Offset(size.width, size.height - 1))
                 return@Canvas
             }
-            // Log-frequency axis: 600 Hz lands exactly mid-band, matching the mockup,
-            // and low-frequency detail (where most CW sits) gets more width.
-            val lnLo = kotlin.math.ln(300.0)
-            val lnSpan = kotlin.math.ln(1200.0) - lnLo
+            // Log-frequency axis over whatever band is in force: the geometric mean lands
+            // mid-strip (600 Hz for the original 300-1200, matching the mockup), and
+            // low-frequency detail — where most CW sits — gets more width.
+            val lnLo = kotlin.math.ln(bandMinHz)
+            val lnSpan = kotlin.math.ln(bandMaxHz) - lnLo
+            val bandSpan = bandMaxHz - bandMinHz
             fun xOf(hz: Double) =
-                ((kotlin.math.ln(hz.coerceIn(300.0, 1200.0)) - lnLo) / lnSpan * size.width).toFloat()
+                ((kotlin.math.ln(hz.coerceIn(bandMinHz, bandMaxHz)) - lnLo) / lnSpan * size.width).toFloat()
             for (b in 0 until n) {
-                val f0 = 300.0 + b * 900.0 / n
-                val f1 = 300.0 + (b + 1) * 900.0 / n
+                val f0 = bandMinHz + b * bandSpan / n
+                val f1 = bandMinHz + (b + 1) * bandSpan / n
                 val x0 = xOf(f0)
                 val x1 = xOf(f1)
                 val h = (spectrum[b] * (size.height - 8f)).coerceAtLeast(2f)
@@ -212,8 +235,13 @@ fun SpectrumStrip(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            for (f in listOf("300", "600", "1200")) {
-                Text(f, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = p.textMuted)
+            // Mid label is the geometric mean so it sits where the log axis puts it.
+            val mid = kotlin.math.sqrt(bandMinHz * bandMaxHz)
+            for (f in listOf(bandMinHz, mid, bandMaxHz)) {
+                Text(
+                    "%.0f".format(f),
+                    fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = p.textMuted,
+                )
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

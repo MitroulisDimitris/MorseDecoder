@@ -3,6 +3,7 @@ package com.morsedecoder.core
 import com.morsedecoder.core.live.LiveDecoderEngine
 import com.morsedecoder.core.live.LiveDecoderEngine.Event
 import com.morsedecoder.core.live.LiveDecoderEngine.LockState
+import com.morsedecoder.core.dsp.KeyingSpread
 import com.morsedecoder.core.metrics.TextMetrics
 import com.morsedecoder.core.model.KalmanUnit
 import com.morsedecoder.core.synth.SyntheticMorseGenerator
@@ -229,12 +230,166 @@ class LiveEngineTest {
             "locked mains hum at ${vetoed.toneHz} without override"
         }
 
-        val overridden = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(mainsOverride = true))
+        // The override lifts the *frequency* veto, which is what this test is about.
+        // D-13's keying screen is a separate gate and would reject bare hum on its own
+        // merits, so it is switched off here to keep the assertion aimed at FR-2.5.
+        val overridden = LiveDecoderEngine(
+            cfg = LiveDecoderEngine.Config(mainsOverride = true, requireKeyingToLock = false)
+        )
         feedInChunks(overridden, hum)
         assertTrue(
             overridden.lockState == LockState.LOCKED || overridden.lockState == LockState.DEGRADED
         ) { "override should allow the 600 Hz lock" }
         assertTrue(abs(overridden.toneHz - 600.0) < 10.0)
+    }
+
+    /**
+     * D-13: the loudest peak in the band is not necessarily Morse. A strong unkeyed
+     * carrier sitting beside a weaker keyed signal must not win the lock — locking the
+     * carrier is a dead end, because no elements flow and the element-counted re-lock
+     * guards can therefore never fire to correct it.
+     */
+    @Test
+    fun `a loud unkeyed carrier never beats a weaker keyed signal (D-13)`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 18.0, toneHz = 1462.0, amplitude = 0.25, seed = 83L)
+        )
+        // Twice the amplitude of the Morse, and inside the band — but never keyed.
+        val mixed = FloatArray(gen.samples.size) {
+            (gen.samples[it] + 0.5 * sin(2.0 * PI * 1123.0 * it / 16_000)).toFloat().coerceIn(-1f, 1f)
+        }
+
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, mixed)
+        engine.finish()
+
+        assertTrue(abs(engine.toneHz - 1462.0) < 20.0) {
+            "locked ${engine.toneHz}, expected the keyed 1462 Hz signal not the louder carrier"
+        }
+        assertTrue(engine.transcript.size > 20) { "only ${engine.transcript.size} chars decoded" }
+
+        // Guard against a vacuous test: the carrier really is the stronger peak, so
+        // power-only selection genuinely fails here.
+        val powerOnly = LiveDecoderEngine(
+            cfg = LiveDecoderEngine.Config(requireKeyingToLock = false)
+        )
+        feedInChunks(powerOnly, mixed)
+        powerOnly.finish()
+        assertTrue(abs(powerOnly.toneHz - 1123.0) < 20.0) {
+            "fixture does not exercise D-13: power-only selection locked ${powerOnly.toneHz}"
+        }
+    }
+
+    /**
+     * D-13 dead-end recovery: a lock that has never decoded anything must be abandoned so
+     * the real signal can be found. Nothing else can correct it — no elements flow, so the
+     * element-counted re-lock guards never advance. This is the shape of the field report:
+     * locked on nothing while the Morse sat elsewhere in the band.
+     */
+    @Test
+    fun `a lock that never decodes is abandoned and the real signal found (D-13)`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 18.0, toneHz = 1462.0, snrDb = 14.0, seed = 103L)
+        )
+        val engine = LiveDecoderEngine()
+        // A manual lock on a frequency carrying nothing: the dead end, by construction.
+        feedInChunks(engine, gen.samples.copyOfRange(0, 16_000))
+        engine.forceLock(700.0)
+        feedInChunks(engine, gen.samples.copyOfRange(16_000, gen.samples.size))
+        engine.finish()
+
+        assertTrue(abs(engine.toneHz - 1462.0) < 20.0) {
+            "still on ${engine.toneHz}; the dead lock was never abandoned"
+        }
+        assertTrue(engine.transcript.size > 20) { "only ${engine.transcript.size} chars after recovery" }
+
+        // Guard against a vacuous test: with recovery disabled the dead lock persists.
+        val stuck = LiveDecoderEngine(
+            cfg = LiveDecoderEngine.Config(
+                unprovenLockMs = Double.MAX_VALUE,
+                unkeyedLockSweeps = Int.MAX_VALUE,
+            )
+        )
+        feedInChunks(stuck, gen.samples.copyOfRange(0, 16_000))
+        stuck.forceLock(700.0)
+        feedInChunks(stuck, gen.samples.copyOfRange(16_000, gen.samples.size))
+        stuck.finish()
+        assertTrue(abs(stuck.toneHz - 700.0) < 40.0) {
+            "fixture does not exercise recovery: without it the lock moved to ${stuck.toneHz}"
+        }
+    }
+
+    /** The keying score is the whole basis of D-13, so pin its two extremes. */
+    @Test
+    fun `keying spread separates a keyed tone from a bare carrier (D-13)`() {
+        val keyed = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 20.0, toneHz = 1462.0, seed = 89L)
+        )
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, keyed.samples)
+        assertTrue(engine.keyingSpreadAt(1462.0) >= KeyingSpread.LOCK_MIN_SPREAD) {
+            "keyed tone scored ${engine.keyingSpreadAt(1462.0)}, below the lock bar"
+        }
+
+        val carrier = FloatArray(8 * 16_000) { (0.4 * sin(2.0 * PI * 1123.0 * it / 16_000)).toFloat() }
+        val steady = LiveDecoderEngine()
+        feedInChunks(steady, carrier)
+        assertTrue(steady.keyingSpreadAt(1123.0) < KeyingSpread.LOCK_MIN_SPREAD) {
+            "bare carrier scored ${steady.keyingSpreadAt(1123.0)}, above the lock bar"
+        }
+    }
+
+    /** The band ceiling is a live setting; a lock outside it must not silently persist. */
+    @Test
+    fun `lowering the band ceiling below the lock resumes searching`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 20.0, toneHz = 1462.0, seed = 97L)
+        )
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, gen.samples.copyOfRange(0, 6 * 16_000))
+        assertTrue(abs(engine.toneHz - 1462.0) < 20.0) { "did not lock 1462 Hz: ${engine.toneHz}" }
+
+        engine.bandMaxHz = 1200.0
+        feedInChunks(engine, gen.samples.copyOfRange(6 * 16_000, 8 * 16_000))
+        // The lock must not persist outside the band. Re-acquiring somewhere legal is
+        // fine — what would be wrong is sitting on 1462 Hz that the sweep no longer sees.
+        assertTrue(engine.toneHz <= 1200.0) {
+            "kept a ${engine.toneHz} Hz lock after the ceiling dropped to 1200"
+        }
+    }
+
+    /**
+     * A tone above the old 1200 Hz ceiling — the field report that prompted F1, where a
+     * phone recording carried its CW note at 1882 Hz.
+     *
+     * The fixture carries broadband noise on purpose. A *noiseless* keyed tone is still
+     * decodable from below the ceiling, because the raised-cosine key transitions put
+     * skirt energy across the whole spectrum and that skirt carries the full timing
+     * envelope. Real recordings do not behave that way: their in-band content is room
+     * noise uncorrelated with the keying, which is why the real clip failed outright.
+     * Noise here is what makes the fixture resemble the reported failure.
+     */
+    @Test
+    fun `a tone above the old 1200 Hz ceiling now decodes (F1)`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 18.0, toneHz = 1882.0, snrDb = 12.0, seed = 101L)
+        )
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, gen.samples)
+        engine.finish()
+
+        assertTrue(abs(engine.toneHz - 1882.0) < 20.0) { "locked ${engine.toneHz}" }
+        val cer = TextMetrics.cer(gen.normalizedText, text(engine))
+        assertTrue(cer < 0.12) { "CER $cer at 1882 Hz; decoded '${text(engine)}'" }
+
+        // Guard against a vacuous test: under the old ceiling this is largely undecodable.
+        val old = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(bandMaxHz = 1200.0))
+        feedInChunks(old, gen.samples)
+        old.finish()
+        assertTrue(old.transcript.size < engine.transcript.size / 4) {
+            "old band decoded ${old.transcript.size} of ${engine.transcript.size} chars — " +
+                "fixture does not exercise F1"
+        }
     }
 
     /**

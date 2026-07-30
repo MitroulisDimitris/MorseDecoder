@@ -4,6 +4,7 @@ import com.morsedecoder.core.audio.PcmSource
 import com.morsedecoder.core.audio.readAllSamples
 import com.morsedecoder.core.dsp.Bootstrap
 import com.morsedecoder.core.dsp.Goertzel
+import com.morsedecoder.core.dsp.KeyingSpread
 import com.morsedecoder.core.dsp.Spectrum
 
 /**
@@ -17,6 +18,8 @@ import com.morsedecoder.core.dsp.Spectrum
 class FrontEnd(
     private val windowMs: Double = 10.0,
     private val hopMs: Double = 2.5,
+    private val bandMinHz: Double = Spectrum.DEFAULT_BAND_MIN_HZ,
+    private val bandMaxHz: Double = Spectrum.DEFAULT_BAND_MAX_HZ,
 ) {
 
     /** One mark or gap with its position on the session clock. */
@@ -35,7 +38,7 @@ class FrontEnd(
         val sr = source.sampleRate
 
         val toneHz = toneHzOverride
-            ?: Spectrum.estimateToneHz(samples, sr)
+            ?: chooseTone(samples, sr)
             ?: return Output(0.0, emptyList(), 60.0)
 
         val win = (windowMs * sr / 1000.0).toInt()
@@ -74,6 +77,27 @@ class FrontEnd(
         runs = pruneRuns(runs, gateMs)
         runs = trimSilence(runs)
         return Output(toneHz, runs, bootUnit, snrDb)
+    }
+
+    /**
+     * Pick the tone to demodulate: the strongest peak that is actually being keyed.
+     *
+     * A recording contains plenty of narrowband energy that is not Morse — hum, speaker
+     * resonance, traffic rumble — and any of it can be louder than the CW note. Scoring
+     * the shortlist by keying rather than by power is what stops the whole decode being
+     * spent on the wrong frequency.
+     *
+     * Falls back to the loudest candidate when nothing clears the keying bar, so a
+     * marginal recording still gets decoded on a best-effort basis; the no-keying guard
+     * below and `modelFitQuality` remain the honest-failure path (P-4).
+     */
+    private fun chooseTone(samples: FloatArray, sr: Int): Double? {
+        val candidates = Spectrum.candidateTones(samples, sr, bandMinHz, bandMaxHz)
+        if (candidates.isEmpty()) return Spectrum.estimateToneHz(samples, sr, bandMinHz, bandMaxHz)
+        val keyed = candidates.firstOrNull {
+            KeyingSpread.of(samples, sr, it) >= KeyingSpread.LOCK_MIN_SPREAD
+        }
+        return keyed ?: candidates.first()
     }
 
     private fun rle(bits: BooleanArray): List<Run> {

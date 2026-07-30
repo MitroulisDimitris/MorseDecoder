@@ -90,6 +90,20 @@ Per P-4 these replace output rather than decorating it:
 - **Outside calibrated range** — speed below 5 or above 40 WPM; decoding continues
   best-effort, accuracy targets void
 
+## Settings
+
+Reachable from the status row (⚙) so it is available while idle and while listening.
+
+It holds only what depends on the **user's equipment**, not on the signal: the tone
+search-band ceiling is the first such value, because sidetone pitch and recording chain
+vary per operator and no default fits everyone. Decoder thresholds stay out — they were
+derived from measurements against real audio, and asking a user to tune them would be
+asking them to guess at something the project calibrated on purpose.
+
+Band changes apply to the running session immediately. The lock may be lost (the search
+restarts if the current tone falls outside the new band) but the transcript is kept —
+P-2 governs the decoder never retracting, and a settings change is not a retraction.
+
 ## Still to design
 
 - Session history / file import screens
