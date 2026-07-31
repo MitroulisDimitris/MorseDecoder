@@ -54,7 +54,8 @@ class DecoderService : Service() {
         val toneHz: Double = 0.0,
         val wpm: Double? = null,
         val snrDb: Double = 0.0,
-        val fitQuality: Double = 1.0,
+        /** null until enough marks are observed to have an opinion (D-5). */
+        val fitQuality: Double? = null,
         val lowSignal: Boolean = false,
         val poorFit: Boolean = false,       // FR-5.8/P-4: fit gate is holding output back
         /** P-4: input implies a speed above the 60 WPM ceiling, so no speed is shown. */

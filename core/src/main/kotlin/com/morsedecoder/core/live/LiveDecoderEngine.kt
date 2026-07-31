@@ -146,7 +146,21 @@ class LiveDecoderEngine(
     var lockState = LockState.SEARCHING; private set
     var toneHz = 0.0; private set
     var snrDb = 0.0; private set
-    var fitQuality = 1.0; private set
+    /**
+     * modelFitQuality over the recent observation window, or **null when too few marks
+     * have been seen to have an opinion** (D-5).
+     *
+     * It used to report a neutral 1.0 until the window filled, which the UI rendered as
+     * `fit 1.00` — identical to a flawless decode. A lock producing nothing at all
+     * therefore displayed maximum confidence, and measurements showed characters being
+     * emitted with literally zero fit samples behind them. "No data" and "perfect" must
+     * not be the same value; nullable is the representation that forces every caller to
+     * decide which it is holding.
+     */
+    val fitQuality: Double? get() = if (obsFit.ready) fitQualityRaw else null
+
+    /** The raw score, neutral before the window is ready. Internal gates guard on readiness. */
+    private var fitQualityRaw = 1.0
     var lowSignal = false; private set
     /**
      * FR-5.8/P-4: true when the fit-quality output gate is holding characters back
@@ -538,16 +552,16 @@ class LiveDecoderEngine(
         kalman?.let { k ->
             if (run.isMark) {
                 obsFit.add(ln(run.durationMs / k.unitMs))
-                fitQuality = obsFit.value()
+                fitQualityRaw = obsFit.value()
                 if (obsFit.ready) {
-                    fitLog[fitLogIdx] = fitQuality
+                    fitLog[fitLogIdx] = fitQualityRaw
                     fitLogIdx = (fitLogIdx + 1) % fitLog.size
                     if (fitLogCount < fitLog.size) fitLogCount++
                 }
                 refreshDegraded()
             }
         }
-        if (obsFit.ready && fitQuality < cfg.relockFitThreshold) poorElements++ else poorElements = 0
+        if (obsFit.ready && fitQualityRaw < cfg.relockFitThreshold) poorElements++ else poorElements = 0
 
         // Output gate (P-4 / FR-5.8): only judge once the observation window is ready —
         // fitQuality is a neutral 1.0 before then, which must not be read as "coherent".
@@ -558,7 +572,7 @@ class LiveDecoderEngine(
         // lifts suppression. Clean code holds a long good run and never suppresses; ambient
         // noise cannot sustain the run, so it clamps and stays clamped.
         if (cfg.outputGateEnabled && obsFit.ready) {
-            if (fitQuality >= cfg.emitFitResumeAbove) {
+            if (fitQualityRaw >= cfg.emitFitResumeAbove) {
                 goodFitStreak++
                 if (goodFitStreak >= cfg.emitResumeAfterMarks) {
                     poorFitStreak = 0
@@ -566,7 +580,7 @@ class LiveDecoderEngine(
                 }
             } else {
                 goodFitStreak = 0
-                if (fitQuality <= cfg.emitFitSuppressBelow) {
+                if (fitQualityRaw <= cfg.emitFitSuppressBelow) {
                     poorFitStreak++
                     if (poorFitStreak >= cfg.emitSuppressAfterMarks) outputSuppressed = true
                 }
@@ -865,7 +879,7 @@ class LiveDecoderEngine(
         bootstrapRuns.clear()
         bootstrapTooFast = false
         obsFit.clear()
-        fitQuality = 1.0
+        fitQualityRaw = 1.0
         poorElements = 0
         outputSuppressed = false
         poorFitStreak = 0
@@ -907,7 +921,7 @@ class LiveDecoderEngine(
 
     private fun refreshDegraded() {
         if (lockState != LockState.LOCKED && lockState != LockState.DEGRADED) return
-        lockState = if (lowSignal || (obsFit.ready && fitQuality < 0.35)) LockState.DEGRADED else LockState.LOCKED
+        lockState = if (lowSignal || (obsFit.ready && fitQualityRaw < 0.35)) LockState.DEGRADED else LockState.LOCKED
     }
 
     private fun allowedLockFreq(f: Double): Boolean = cfg.mainsOverride || !isMainsHarmonic(f)

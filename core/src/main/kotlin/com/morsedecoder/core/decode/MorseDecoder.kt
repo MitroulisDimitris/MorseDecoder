@@ -62,10 +62,7 @@ class MorseDecoder(
 
         // Calibrated-band handling (D-1/FR-5.7): far outside any plausible keying,
         // this is threshold chatter, not Morse — emit nothing rather than garbage (P-4).
-        // Moderately outside 5-40 WPM: decode best-effort and flag. The band carries a
-        // ~6 % margin so signals sent exactly at the 5/40 WPM edges are not flagged.
         if (u0 < 15.0 || u0 > 500.0) return empty(fe.toneHz)
-        val outOfRange = u0 !in 28.0..255.0
 
         // Honest-failure gate (P-4): if the two-cluster model cannot describe the
         // measured marks at all, this is not decodable keying. The live path grows a
@@ -107,6 +104,17 @@ class MorseDecoder(
 
         val chars = decoder.output
         val text = assembleText(chars, assists.cutNumbers)
+
+        // FR-5.7, computed from the unit actually reported (D-4). It was previously
+        // derived from `u0`, the pass-1 bootstrap, while `wpm` below comes from the
+        // pass-2 Kalman — so the flag described a different number than the one on
+        // screen. A drifting decode could bootstrap inside the band, finish at 59 WPM,
+        // and display that with no warning at all.
+        //
+        // Bounds are in unit-milliseconds with a ~6 % margin, so a signal sent at
+        // exactly 5 or 40 WPM is not flagged by measurement noise alone.
+        val outOfRange = kalman.unitMs !in 28.0..255.0
+
         return FileResult(
             text = text,
             toneHz = fe.toneHz,

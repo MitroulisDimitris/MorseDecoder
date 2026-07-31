@@ -292,11 +292,16 @@ private fun MainScreen(p: Palette) {
                 "snr", "%.0f".format(state.snrDb), "dB",
                 p, modifier = Modifier.weight(1f),
             )
+            // A null fit is "not enough marks to judge yet", which must not render as a
+            // confident 1.00 (D-5) — an em dash in muted grey says the same thing the
+            // other readouts say when they have nothing: nothing.
+            val fit = state.fitQuality
             MetricCard(
-                "fit", "%.2f".format(state.fitQuality), null, p,
+                "fit", fit?.let { "%.2f".format(it) } ?: "—", null, p,
                 valueColor = when {
+                    fit == null -> p.textMuted
                     state.lockState == LockState.DEGRADED -> p.danger
-                    state.fitQuality >= 0.8 -> p.success
+                    fit >= 0.8 -> p.success
                     else -> p.warning
                 },
                 modifier = Modifier.weight(1f),

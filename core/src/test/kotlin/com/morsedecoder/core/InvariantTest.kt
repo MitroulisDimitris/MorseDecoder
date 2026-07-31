@@ -145,7 +145,7 @@ class InvariantTest {
             assertEquals(0, engine.transcript.size) { "$name decoded ${engine.transcript.size} chars" }
             assertTrue(engine.toneHz.isFinite()) { "$name left toneHz = ${engine.toneHz}" }
             assertTrue(engine.snrDb.isFinite()) { "$name left snrDb = ${engine.snrDb}" }
-            assertTrue(engine.fitQuality.isFinite()) { "$name left fitQuality = ${engine.fitQuality}" }
+            engine.fitQuality?.let { assertTrue(it.isFinite()) { "$name left fitQuality = $it" } }
             engine.wpm?.let { assertTrue(it.isFinite() && it > 0) { "$name reported wpm $it" } }
         }
     }

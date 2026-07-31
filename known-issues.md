@@ -20,6 +20,7 @@ Severity is about what a user experiences, not how hard the fix is:
 | **High** | Produces wrong output that looks correct, or blocks a real use case |
 | **Medium** | Degrades a real use case; user can see something is wrong |
 | **Low** | Cosmetic, or affects developers only |
+| **FIXED** | Closed; kept briefly for the record, with its regression test named |
 
 ---
 
@@ -147,33 +148,36 @@ above that. Amends FR-2.5, so it needs a decision. At Low severity there is no h
 
 ---
 
-## D-4 — Out-of-range flag is computed from a different number than the one displayed · Medium
+## D-4 — Out-of-range flag computed from a different number than the one displayed · FIXED
 
-`MorseDecoder.kt:68` derives `outOfCalibratedRange` from `u0`, the *bootstrap* unit, while
-the UI displays `kalman.wpm` from pass two. The two can disagree arbitrarily.
-
-Measured: the real recording decoded at **58.95 WPM with no "outside 5–40 WPM" warning**,
+`MorseDecoder` derived `outOfCalibratedRange` from `u0`, the pass-1 bootstrap unit, while
+the displayed `wpm` comes from the pass-2 Kalman. The two could disagree arbitrarily, and
+did: the field recording decoded at **58.95 WPM with no "outside 5–40 WPM" warning**,
 because the bootstrap that seeded it sat inside the band.
 
-Fix is small — derive the flag from the reported speed. Worth going further: a large
-disagreement between the bootstrap unit and the final unit is itself evidence the decode
-is unreliable, and is currently discarded.
+Now derived from the reported unit, after pass 2. The ~6 % margin is unchanged, so a
+signal sent at exactly 5 or 40 WPM is still not flagged by measurement noise alone.
+
+Covered by three regression tests in `HonestFailureTest`: out-of-band is flagged, in-band
+is not, and both edges of the band are not.
 
 ---
 
-## D-5 — "No data" and "perfect fit" render identically · Medium
+## D-5 — "No data" and "perfect fit" rendered identically · FIXED
 
-`ObservationFit.value()` returns a neutral `1.0` until at least 12 marks have been
-observed (`ObservationFit.kt:35`). The UI renders that as `fit 1.00`, which is also what a
-flawless decode shows. A lock that is producing nothing at all therefore displays maximum
-confidence.
+`ObservationFit.value()` returned a neutral `1.0` until twelve marks had been observed, and
+the UI rendered that as `fit 1.00` — the same thing a flawless decode shows. A lock
+producing nothing at all therefore displayed maximum confidence, and measurements found
+characters being emitted with *zero* fit samples behind them.
 
-Distinct from **D-1**: that one is a genuine 1.00 on real measurements, this one is a
-placeholder being shown as a measurement. Both mislead in the same direction.
+`LiveDecoderEngine.fitQuality` is now `Double?`, null until the window is ready, and the
+readout shows a muted `—`. Nullable rather than a sentinel on purpose: it forces every
+call site to decide which case it is holding, where a NaN or a 1.0 lets the ambiguity
+travel silently. Internal gates already guarded on `obsFit.ready` and are unaffected.
 
-Fix: render `—` until `obsFit.ready`, and surface a state for "locked, nothing decoding".
-The engine-side half of this landed with D-13 (an unproven lock is now abandoned), but the
-UI still shows no explanation while it happens.
+Covered by `HonestFailureTest`: unknown before any marks, reported once the window fills.
+The API change also strengthened AC-10, which now requires the fit to be *known* as well as
+above 0.45 after a recovery.
 
 ---
 

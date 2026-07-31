@@ -6,6 +6,7 @@ import com.morsedecoder.core.live.LiveDecoderEngine
 import com.morsedecoder.core.metrics.TextMetrics
 import com.morsedecoder.core.synth.SyntheticMorseGenerator
 import com.morsedecoder.core.synth.SyntheticMorseGenerator.Config
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -116,13 +117,12 @@ class HonestFailureTest {
     }
 
     /**
-     * FR-5.7's out-of-range flag must describe the speed the user is shown. Today it is
-     * derived from `u0`, the bootstrap unit, while the UI displays the pass-2 Kalman
-     * speed — so the field recording showed 58.9 WPM with no "outside 5–40" warning.
-     * `MorseDecoder.kt:68`.
+     * FR-5.7's out-of-range flag must describe the speed the user is shown. It used to be
+     * derived from `u0`, the pass-1 bootstrap, while the UI displays the pass-2 Kalman
+     * speed — which is how the field recording came to show 58.9 WPM with no
+     * "outside 5–40" warning beside it.
      */
     @Test
-    @KnownFailure("D-4", "out-of-range flag ignores the reported speed")
     fun `the out-of-range flag agrees with the reported speed`() {
         // Fading plus static drives the estimate to the 60 WPM clamp — far outside 5-40.
         val gen = SyntheticMorseGenerator.generate(
@@ -132,27 +132,64 @@ class HonestFailureTest {
             )
         )
         val result = MorseDecoder().decodeFile(FloatArrayPcmSource(gen.samples, gen.sampleRate))
-        val shouldFlag = result.wpm !in 5.0..40.0
-        assertTrue(result.outOfCalibratedRange == shouldFlag) {
-            "reported ${"%.1f".format(result.wpm)} WPM but outOfCalibratedRange=" +
-                "${result.outOfCalibratedRange}"
+        assertTrue(result.wpm > 40.0) { "fixture no longer drives the speed out of band" }
+        assertTrue(result.outOfCalibratedRange) {
+            "reported ${"%.1f".format(result.wpm)} WPM without flagging it out of range"
+        }
+    }
+
+    /** The other direction: a signal inside the band must not be flagged. */
+    @Test
+    fun `a speed inside the calibrated band is not flagged`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val result = MorseDecoder().decodeFile(FloatArrayPcmSource(gen.samples, gen.sampleRate))
+        assertTrue(result.wpm in 15.0..25.0) { "fixture decoded at ${result.wpm} WPM" }
+        assertTrue(!result.outOfCalibratedRange) {
+            "flagged ${"%.1f".format(result.wpm)} WPM as outside 5-40"
+        }
+    }
+
+    /** And at the edges, where the ~6 % margin exists so noise alone cannot trip the flag. */
+    @Test
+    fun `signals sent at the band edges are not flagged`() {
+        for (wpm in listOf(5.0, 40.0)) {
+            val gen = SyntheticMorseGenerator.generate(
+                Config(text = text, wpm = wpm, toneHz = 612.0, snrDb = 12.0, seed = 71L)
+            )
+            val result = MorseDecoder().decodeFile(FloatArrayPcmSource(gen.samples, gen.sampleRate))
+            assertTrue(!result.outOfCalibratedRange) {
+                "$wpm WPM decoded as ${"%.1f".format(result.wpm)} and was flagged out of range"
+            }
         }
     }
 
     /**
-     * `fitQuality` returns a neutral 1.0 until twelve marks have been observed, and the UI
-     * renders that as `fit 1.00` — indistinguishable from a flawless decode. "No data" and
-     * "perfect" must not look the same; a lock producing nothing currently displays maximum
-     * confidence.
+     * "No data" and "perfect" must not be the same value. `fitQuality` used to return a
+     * neutral 1.0 until twelve marks had been observed, which the UI rendered as
+     * `fit 1.00` — indistinguishable from a flawless decode, so a lock producing nothing
+     * displayed maximum confidence.
      */
     @Test
-    @KnownFailure("D-5", "no-data and perfect-fit are indistinguishable")
-    fun `fit quality does not read as perfect before any marks are observed`() {
+    fun `fit quality is unknown, not perfect, before any marks are observed`() {
         val engine = LiveDecoderEngine()
         feed(engine, FloatArray(3 * 16_000))    // silence: nothing to fit
         assertTrue(engine.recentFits().isEmpty()) { "fixture unexpectedly produced fit samples" }
-        assertTrue(engine.fitQuality < 1.0) {
+        assertNull(engine.fitQuality) {
             "fitQuality reads ${engine.fitQuality} with no observations behind it"
         }
+    }
+
+    /** The counterpart: once marks have been seen, a real score must be reported. */
+    @Test
+    fun `fit quality is reported once the observation window fills`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val engine = LiveDecoderEngine()
+        feed(engine, gen.samples)
+        val fit = engine.fitQuality
+        assertTrue(fit != null && fit > 0.5) { "clean 20 WPM reported fit $fit" }
     }
 }

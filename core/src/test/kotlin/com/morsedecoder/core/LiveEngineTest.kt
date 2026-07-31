@@ -167,7 +167,8 @@ class LiveEngineTest {
         // Decoding after recovery is real decoding again.
         val afterRelock = engine.transcript.filter { it.tStartMs > auto.first().atMs }
         assertTrue(afterRelock.size > 10) { "only ${afterRelock.size} chars after re-lock" }
-        assertTrue(engine.fitQuality > 0.45) { "fit did not recover: ${engine.fitQuality}" }
+        val recoveredFit = engine.fitQuality
+        assertTrue(recoveredFit != null && recoveredFit > 0.45) { "fit did not recover: $recoveredFit" }
     }
 
     @Test

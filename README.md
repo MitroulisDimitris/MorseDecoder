@@ -164,6 +164,7 @@ actually send: **real hand-sent recordings remain the gap in the test corpus.**
 | `pipeline.md` | Signal chain architecture, the three clocks, failure modes |
 | `decisions.md` | Why the non-obvious choices are what they are |
 | `known-issues.md` | Open defects and gaps, with the evidence behind each |
+| `prior-art.md` | How other Morse decoders solve this, and what we should borrow |
 | `export-formats.md` | `.txt` and `.json` schemas |
 | `ui-spec.md` | Screen layout and annotation vocabulary |
 | `main-screen.html` | Visual reference; open in a browser |
