@@ -55,6 +55,95 @@ To generate a WAV for on-device acoustic testing:
 DEMO_WAV_OUT=demo.wav DEMO_WAV_WPM=20 gradlew :core:test --tests "*DemoWavTest*"
 ```
 
+To hear what the suite is actually asserting against — all 27 fixtures as WAV, plus an
+`index.txt` describing each:
+
+```
+FIXTURE_WAV_DIR=fixtures gradlew :core:test --tests "*FixtureWavTest*"
+```
+
+Worth doing occasionally. A fixture named `speech` that does not sound like speech makes
+every assertion resting on it weaker than it reads, and no number of green ticks will
+reveal that — only ears will. It cuts the other way too: if `hand-13-rough` sounds like
+something no operator would ever send, the 250 % error rate it produces is not the
+indictment it appears to be.
+
+## Assessing the decoder
+
+The acceptance criteria are pass/fail at ten fixed points — good regression guards, poor
+instruments. They cannot tell you whether a change made the decoder broadly better or
+worse, only whether it crossed one of ten lines. A change can degrade every scenario by
+four points and still show ten green ticks.
+
+The bench sweeps the space instead, and prints character error rate with no thresholds and
+no verdicts:
+
+```
+BENCH=1 gradlew :core:test --tests "*DecoderBench*" -i
+BENCH=1 BENCH_CSV=bench.csv gradlew :core:test --tests "*DecoderBench*" -i
+```
+
+Sixteen scenarios — speed 7 to 35 WPM, SNR +20 to −5 dB, rough fists, drift, wobble,
+Farnsworth, hesitation, fading with static, and tones across the band — run against both
+the file and live paths. Roughly 40 seconds.
+
+Each column is a **single-change ablation**, so a regression can be attributed rather than
+merely detected. Every behaviour added in D-13 is config-gated for exactly this reason:
+"was it better before?" is answered by flipping a flag in the current build, not by
+checking out an old commit. `preD13` reverts them all at once.
+
+Read two runs side by side; that is the whole point. Note that CER above 100 % is
+meaningful — it means the decoder emitted more characters than were sent.
+
+## How the suite is organised
+
+Roughly 92 tests in `:core`, in four layers. The split matters: most real-world failures
+are not "CER was 3 % too high at 20 WPM", they are whole categories the point-tests never
+visit.
+
+| Layer | File | What it protects |
+|---|---|---|
+| Accuracy at fixed points | `AcceptanceTest`, `RobustDecoderTest` | The §6 criteria — regression guards |
+| **Declining to decode** | `NonMorseTest` | Speech, RTTY, music, hum, knocking, clipping, noise. Most of what a microphone hears is not Morse, so declining is most of the job |
+| **Properties of every input** | `InvariantTest` | Determinism, independence from the caller's chunk size, append-only, no crash on NaN/Inf/DC/clipping |
+| **Whole sessions** | `SessionSequenceTest` | Noisy lead-in, speed step, tone jump, 30 s pause, truncation, interference arriving mid-transmission |
+
+A fifth file, `HonestFailureTest`, gathers the P-4 propositions — declining rather than
+inventing — because they share one root cause and read better together than scattered.
+
+### Two signals, kept separate
+
+A suite where every known defect is written as a test of *current* behaviour is green
+while the product is broken. A suite where they all fail outright is red permanently, and
+a real regression hides in the noise. Both throw the signal away, so this project keeps
+two:
+
+- **Green / red** answers *did this change break something that used to work.*
+- **The known-failure count** answers *how are we actually doing.*
+
+Tests marked `@KnownFailure("D-9", …)` assert the behaviour we **want and do not have**.
+They fail today; the failure is counted and printed in a summary at the end of every run,
+and the build stays green. A typical run ends:
+
+```
+KNOWN FAILURES — 13 test(s) across 8 open defect(s)
+  D-8   RTTY decodes as Morse            NonMorseTest.RTTY decodes to nothing
+  D-9   a tone change strands the lock   SessionSequenceTest.a tone jump ...
+  ...
+```
+
+The load-bearing half is the other direction: **if a `@KnownFailure` test passes, the
+build fails.** Someone fixed the defect, and the annotation has to come off or the list
+goes stale and starts lying. A known-failure list nobody prunes is worse than no list.
+
+So "93 tests, 0 failures" is never the whole story — read the known-failure count with it.
+
+### Vacuity guards
+
+Fixtures that could pass for the wrong reason carry an explicit check: `NonMorseTest`
+asserts its own non-Morse audio is not accidentally silent, and the ambient, band and
+recovery fixtures each assert they genuinely reproduce the failure they were written for.
+
 ## Acceptance criteria
 
 Stated in §6 of the requirements as character error rate at a given SNR and speed. They
@@ -74,6 +163,7 @@ actually send: **real hand-sent recordings remain the gap in the test corpus.**
 | `v1-requirements.md` | The spec. Numbered requirements, referenced from everywhere else |
 | `pipeline.md` | Signal chain architecture, the three clocks, failure modes |
 | `decisions.md` | Why the non-obvious choices are what they are |
+| `known-issues.md` | Open defects and gaps, with the evidence behind each |
 | `export-formats.md` | `.txt` and `.json` schemas |
 | `ui-spec.md` | Screen layout and annotation vocabulary |
 | `main-screen.html` | Visual reference; open in a browser |
@@ -86,4 +176,9 @@ arbitrary constant is defending against a specific failure mode recorded there.
 
 Version 0.3.0. All six milestones of §7 are implemented: harness, robust timing decoder,
 live path, UI, export, assists.
+
+Open defects and gaps are tracked in `known-issues.md` — read it before trusting a decode.
+The two that matter most: the live path decodes real hand-sent audio considerably worse
+than file import does, and a unit-scale error currently scores a perfect `fit`, so wrong
+output can present as confident output.
 

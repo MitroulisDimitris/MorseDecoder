@@ -132,7 +132,8 @@ private fun MainScreen(p: Palette) {
     var exportSheet by remember { mutableStateOf(false) }
     var pendingSave by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
-    val bandMaxHz by Settings.bandMaxHz.collectAsState()
+    val graphMinHz by Settings.graphMinHz.collectAsState()
+    val graphMaxHz by Settings.graphMaxHz.collectAsState()
 
     val saveTxtLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
@@ -168,10 +169,15 @@ private fun MainScreen(p: Palette) {
             fileResultText = withContext(Dispatchers.Default) {
                 try {
                     val source = AudioFileImporter.load(context, uri)
-                    // Same search band as the live path (FR-2.1); read fresh rather than
-                    // captured, so a change made in settings applies to the next import.
+                    // File decode searches the full graph, not a live narrowing: the
+                    // narrowing was aimed at what the microphone was hearing, and has no
+                    // bearing on a file the user has just chosen. Read fresh, so a change
+                    // in settings applies to the next import.
                     val result = MorseDecoder(
-                        FrontEnd(bandMaxHz = Settings.bandMaxHz.value)
+                        FrontEnd(
+                            bandMinHz = Settings.graphMinHz.value,
+                            bandMaxHz = Settings.graphMaxHz.value,
+                        )
                     ).decodeFile(source)
                     buildString {
                         append(
@@ -230,12 +236,14 @@ private fun MainScreen(p: Palette) {
 
         if (showSettings) {
             SettingsScreen(
-                bandMinHz = Settings.BAND_MIN_HZ,
-                bandMaxHz = bandMaxHz,
-                bandMaxLowest = Settings.BAND_MAX_LOWEST,
-                bandMaxHighest = Settings.BAND_MAX_HIGHEST,
-                bandMaxStep = Settings.BAND_MAX_STEP,
-                onBandMaxHz = { Settings.setBandMaxHz(context, it) },
+                graphMinHz = graphMinHz,
+                graphMaxHz = graphMaxHz,
+                lowest = Settings.GRAPH_LOWEST,
+                highest = Settings.GRAPH_HIGHEST,
+                step = Settings.GRAPH_STEP,
+                minSpan = Settings.GRAPH_MIN_SPAN,
+                onGraphMinHz = { Settings.setGraphMinHz(context, it) },
+                onGraphMaxHz = { Settings.setGraphMaxHz(context, it) },
                 onBack = { showSettings = false },
                 p = p,
             )
@@ -331,9 +339,12 @@ private fun MainScreen(p: Palette) {
             state.lockState == LockState.LOCKED || state.lockState == LockState.DEGRADED,
             state.candidates, p,
             thresholdNorm = state.thresholdNorm,
-            thresholdMinNorm = state.thresholdMinNorm,
-            bandMinHz = state.bandMinHz,
-            bandMaxHz = state.bandMaxHz,
+            graphMinHz = state.graphMinHz,
+            graphMaxHz = state.graphMaxHz,
+            searchLoHz = state.bandMinHz,
+            searchHiHz = state.bandMaxHz,
+            onRangeChange = { lo, hi -> DecoderService.setSearchRange(lo, hi) },
+            onResetRange = { DecoderService.setSearchRange(state.graphMinHz, state.graphMaxHz) },
         )
 
         // 4. lock controls — Re-lock and Pin are separate on purpose (FR-9.9) and hold a
@@ -392,8 +403,9 @@ private fun MainScreen(p: Palette) {
             }
             Spacer(Modifier.weight(1f))
             // The control's travel is finite — past either end the internal clamp
-            // swallows the change — so the steppers grey out there rather than counting
-            // on with no effect. The dashed rule on the spectrum strip is the "−" end.
+            // swallows the change — so the steppers grey out and the readout says which
+            // end it is against. This is where the limit is stated; the spectrum strip
+            // shows only the live threshold, never its bounds.
             val atMin = state.thresholdDb <= state.thresholdDbMin + 0.5
             val atMax = state.thresholdDb >= state.thresholdDbMax - 0.5
             Text("thr", fontSize = 11.sp, color = p.warning)
@@ -402,8 +414,10 @@ private fun MainScreen(p: Palette) {
                 enabled = !atMin,
             ) { Text("−", fontSize = 13.sp, color = if (atMin) p.textMuted else p.textSecondary) }
             Text(
-                "%+.0f dB".format(state.thresholdDb),
-                fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = p.textSecondary,
+                "%+.0f dB".format(state.thresholdDb) +
+                    if (atMin) " min" else if (atMax) " max" else "",
+                fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                color = if (atMin || atMax) p.textMuted else p.textSecondary,
             )
             TextButton(
                 onClick = { DecoderService.adjustThreshold(state.thresholdDb + 1.0) },

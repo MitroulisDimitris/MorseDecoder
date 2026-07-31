@@ -72,15 +72,27 @@ with a principle here, the principle wins and the requirement is wrong.
 
 ### FR-2 — Tone detection and lock
 
-- **FR-2.1** Locate the carrier by rolling FFT peak search over 300–2000 Hz. The ceiling
-  is a user setting (FR-9.14); the 300 Hz floor is fixed. See D-13 — the original
-  1200 Hz ceiling put real recordings permanently out of reach.
+- **FR-2.1** Locate the carrier by rolling FFT peak search over 300–2000 Hz. **Both**
+  bounds are user settings (FR-9.14), adjustable over 100–4000 Hz with a 400 Hz minimum
+  span. See D-13 — the original 1200 Hz ceiling put real recordings permanently out of
+  reach.
+  The floor was previously specified as fixed at 300 Hz, on the grounds that below it is
+  mains hum and handling noise. Measured: at floors of 300, 200 and 100 Hz the engine
+  locks none of 50 Hz hum, 60 Hz hum, pink noise or impulsive knocking — the mains veto
+  (FR-2.5) and the keying screen (FR-2.1a) carry that weight on their own, so the fixed
+  floor was redundant defence rather than load-bearing.
 - **FR-2.1a** Select among candidate peaks by **keying**, not by power: score each peak's
   envelope and prefer one that is switching on and off. The loudest narrowband signal in
   the band is frequently not Morse, and a lock on an unkeyed carrier decodes nothing.
 - **FR-2.1b** Abandon a lock that has never decoded a character (after ~15 s, or ~8 s if
   its frequency carries signal that is not keying) and resume searching. A lock that has
   decoded successfully is never abandoned this way — FR-2.10 governs that case.
+- **FR-2.1c** The search range is narrowable **live** within the graph bounds, directly on
+  the spectrum strip, with a 100 Hz minimum span. This is how a user excludes a artifact
+  that keeps winning the lock. The narrowing is session-scoped and is **not** persisted —
+  a range narrowed to chase one signal must not silently still be narrow tomorrow.
+  Excluded spectrum stays drawn (dimmed), so the excluded peak remains visible as the
+  explanation for the change. Candidate tones (FR-2.14) outside the range are not offered.
 - **FR-2.2** Extract per-hop energy with a Goertzel filter locked to the tracked
   frequency.
 - **FR-2.3** Track frequency with a slow EMA. Adaptation must be slow enough not to
@@ -272,10 +284,11 @@ original raw decode remains inspectable.
   tell whether a stretch of garbage is a lock problem or bad sending.
 - **FR-9.14** A settings screen, reachable while idle and while listening, holding only
   values that depend on the user's own equipment rather than on the signal. The tone
-  search-band ceiling (FR-2.1) is the first of these. Decoder thresholds are calibrated
-  against measurements and are deliberately **not** exposed — a user cannot be expected
-  to tune what was derived from data. Band changes apply to a running session without
-  losing the transcript.
+  graph's bounds (FR-2.1) are the first of these — they set the spectrum axis extent and
+  the widest the decoder will ever search, and they persist. Decoder thresholds are
+  calibrated against measurements and are deliberately **not** exposed — a user cannot be
+  expected to tune what was derived from data. Changes apply to a running session without
+  losing the transcript, and reset any live narrowing (FR-2.1c) to the full span.
 
 ### FR-10 — Export and persistence
 

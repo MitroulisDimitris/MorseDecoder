@@ -75,12 +75,14 @@ class DecoderService : Service() {
         // Keying threshold drawn on the spectrum strip (FR-9.4/9.5), in the same
         // dB-above-noise-floor units as the bars.
         val thresholdNorm: Float = 0f,
-        val thresholdMinNorm: Float = 0f,
         val envelopeNorm: Float = 0f,
         val elapsedLockMs: Double = 0.0,
         val candidates: List<Double> = emptyList(),
         val bluetoothMic: Boolean = false,  // FR-1.5
-        // Search band in force (FR-2.1) — the spectrum strip's axis follows it.
+        // The spectrum strip's axis extent — persisted user setting (FR-9.14).
+        val graphMinHz: Double = 300.0,
+        val graphMaxHz: Double = 2000.0,
+        // The search range actually in force (FR-2.1), narrowed live within the graph.
         val bandMinHz: Double = 300.0,
         val bandMaxHz: Double = 2000.0,
         val spectrum: FloatArray = FloatArray(0),   // FR-9.4
@@ -117,8 +119,15 @@ class DecoderService : Service() {
         fun pinWpm(wpm: Double?) = instance?.onDecodeThread { it.pinWpm(wpm) }
         fun adjustThreshold(db: Double) = instance?.onDecodeThread { it.thresholdAdjustDb = db }
 
-        /** FR-2.1 band ceiling, live-adjustable from settings; no-op when not running. */
-        fun setBandMaxHz(hz: Double) = instance?.onDecodeThread { it.bandMaxHz = hz }
+        /**
+         * FR-2.1 search range, live-adjustable; no-op when not running. Order matters —
+         * each setter clamps against the other, so widening has to move the far edge
+         * outward first or the clamp swallows half the change.
+         */
+        fun setSearchRange(loHz: Double, hiHz: Double) = instance?.onDecodeThread {
+            if (hiHz > it.bandMaxHz) { it.bandMaxHz = hiHz; it.bandMinHz = loHz }
+            else { it.bandMinHz = loHz; it.bandMaxHz = hiHz }
+        }
 
         // ---- assists (FR-7): independent switches, both off by default (P-3) ----
         fun setLexicon(on: Boolean) = instance?.setAssists(lexicon = on)
@@ -147,6 +156,10 @@ class DecoderService : Service() {
     // Session recording for export (FR-10.1/10.4).
     var recorder: SessionRecorder? = null
         private set
+
+    // Axis extent from settings; the engine holds the (possibly narrower) search range.
+    private var graphMinHz = 300.0
+    private var graphMaxHz = 2000.0
 
     // Assist state (FR-7), both off by default (P-3).
     private var lexiconOn = false
@@ -213,10 +226,15 @@ class DecoderService : Service() {
         requestAudioFocus()
 
         engine = LiveDecoderEngine()
-        // The band ceiling is a persisted user setting; a service restarted by the system
-        // (START_STICKY) must come back with it applied, not with the default.
+        // Graph bounds are a persisted user setting; a service restarted by the system
+        // (START_STICKY) must come back with them applied, not with the defaults. A live
+        // narrowing is deliberately *not* restored — every session starts searching the
+        // full graph, so yesterday's narrowing cannot silently hide today's signal.
         com.morsedecoder.app.Settings.load(this)
-        engine.bandMaxHz = com.morsedecoder.app.Settings.bandMaxHz.value
+        graphMinHz = com.morsedecoder.app.Settings.graphMinHz.value
+        graphMaxHz = com.morsedecoder.app.Settings.graphMaxHz.value
+        engine.bandMaxHz = graphMaxHz
+        engine.bandMinHz = graphMinHz
         txItems.clear()
         wpmTrace.clear()
         eventsConsumed = 0
@@ -308,10 +326,11 @@ class DecoderService : Service() {
             thresholdDbMin = engine.thresholdDbMin,
             thresholdDbMax = engine.thresholdDbMax,
             thresholdNorm = engine.thresholdNorm,
-            thresholdMinNorm = engine.thresholdMinNorm,
             envelopeNorm = engine.envelopeNorm,
             elapsedLockMs = engine.elapsedLockMs,
             candidates = engine.candidates,
+            graphMinHz = graphMinHz,
+            graphMaxHz = graphMaxHz,
             bandMinHz = engine.bandMinHz,
             bandMaxHz = engine.bandMaxHz,
             bluetoothMic = mic?.isBluetoothScoRoute() ?: false,

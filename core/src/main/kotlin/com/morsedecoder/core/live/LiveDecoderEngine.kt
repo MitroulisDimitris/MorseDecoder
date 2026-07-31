@@ -211,8 +211,6 @@ class LiveDecoderEngine(
     // left below it?
     /** Current keying threshold. */
     var thresholdNorm = 0f; private set
-    /** Where the threshold would sit at [thresholdDbMin] — the floor of the control. */
-    var thresholdMinNorm = 0f; private set
     /** Current envelope level at the locked tone. */
     var envelopeNorm = 0f; private set
     var lockedSinceMs = 0.0; private set
@@ -233,7 +231,12 @@ class LiveDecoderEngine(
      */
     val speedImplausible: Boolean get() = kalman?.atSpeedCeiling ?: bootstrapTooFast
     val candidates: List<Double>
-        get() = candidateList.filter { nowMs() - it.firstSeenMs >= cfg.candidateSustainMs }
+        get() = candidateList
+            .filter { nowMs() - it.firstSeenMs >= cfg.candidateSustainMs }
+            // Never offer a tone the user has excluded from the search: a chip that
+            // switches the lock outside the range would contradict the range itself.
+            // Entries can outlive a narrowing by up to their eviction timeout.
+            .filter { it.freqHz >= bandMinHz && it.freqHz <= bandMaxHz }
             .sortedByDescending { it.ratio }
             .take(cfg.maxCandidates)
             .map { it.freqHz }
@@ -471,7 +474,6 @@ class LiveDecoderEngine(
         // Published before the low-signal bail-out: when nothing is decoding, where the
         // threshold sits relative to the signal is precisely what the user needs to see.
         thresholdNorm = normAboveFloor(onThr, floor)
-        thresholdMinNorm = normAboveFloor(floor + cfg.thresholdOnMinFraction * (peak - floor), floor)
         envelopeNorm = normAboveFloor(e, floor)
 
         if (lowSignal) return // FR-3.7: the whole response — no compensation
@@ -883,7 +885,6 @@ class LiveDecoderEngine(
     private fun resetSignalPath() {
         envRing.clear()
         thresholdNorm = 0f
-        thresholdMinNorm = 0f
         envelopeNorm = 0f
         pendingRuns.clear()
         keyState = false

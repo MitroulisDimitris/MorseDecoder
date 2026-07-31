@@ -250,3 +250,53 @@ The file-import path now decodes the clip (1881 Hz, 17.7 WPM, legible). The live
 *finds* the same tone, but decodes it far less well than the two-pass file path does —
 the streaming bootstrap is weaker on real fading hand-sent audio. That is a separate
 problem from tone selection and is the "real corpus" gap already recorded in §7.
+
+---
+
+## D-14 — The spectrum strip is the range control; settings holds only the outer bounds
+
+Two levels, because they answer different questions on different timescales.
+
+**Graph bounds** (persisted, settings screen) are a fact about the user's equipment: what
+frequency their sidetone sits on and what their recording chain does. Set once, changed
+rarely.
+
+**The search range** (session-only, dragged on the strip) is a reaction to what is
+happening right now: a 400 Hz artifact keeps winning the lock and the real signal is at
+1000 Hz. The user is watching it happen and wants it fixed immediately.
+
+Putting the second on the strip rather than in settings follows from that. It is reactive,
+so it must be one gesture away from where the user is already looking; and the strip
+already shows the artifact's position, so making them convert it into a number would be
+work the interface should be doing.
+
+### Excluded spectrum is dimmed, not hidden
+
+The load-bearing detail. The user excludes a region precisely because something in it was
+winning; they need to keep seeing that peak to understand why it stopped. Hiding it makes
+the strip lie about what is in the room, and makes the narrowing look like it did nothing.
+
+For the same reason the axis belongs to the *graph*, not the range: bars stay put while
+only the shading moves. An axis rescaling under a dragging finger reads as the control
+fighting back.
+
+### The narrowing is deliberately not persisted
+
+A range narrowed to chase one stubborn signal, silently still narrow tomorrow, is a
+decoder that mysteriously cannot hear things — and the user has no reason to connect
+today's silence to yesterday's drag. Graph bounds persist because they describe equipment;
+the narrowing does not because it describes a moment.
+
+Mitigation for the session it *does* last: `⟲` is visible beside the readout whenever the
+range is non-default. The undo gesture (double-tap) is invisible, so the state must not be.
+
+### Why not the alternatives
+
+| Rejected | Reason |
+|---|---|
+| Stepper pairs under the strip | Four more controls in the densest part of the screen, and it reintroduces the number-to-position translation the strip removes. |
+| A range slider below the strip | Duplicates the strip's own axis 30 dp lower. The strip *is* the axis. |
+| Tap a peak to lock it | Useful, and worth having as well — but one-shot. It does not stop the engine re-acquiring the same artifact a minute later, which is the actual complaint. |
+| Settings only | Fails the use case, which is reactive. |
+
+Minimum span is 100 Hz: a range dragged shut leaves the decoder searching nothing.

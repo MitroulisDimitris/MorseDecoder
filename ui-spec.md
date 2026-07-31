@@ -23,21 +23,55 @@ at a glance whether the decode can be trusted.
 sits alongside WPM and SNR. Green above ~0.8, amber below, red when the lock is
 `degraded`.
 
-### The threshold is drawn, not just numbered
+### The spectrum strip is also the range control
 
-`thr ±N dB` on its own is unreadable — the user cannot tell whether turning it down will
-help. Two rules overlay the spectrum strip: the live keying threshold, and dashed beneath
-it, where that threshold sits with the control turned all the way down. The gap between
-them is the sensitivity still in hand. When they meet, the control is spent, and a tone
-below the line is not going to be recovered by turning `thr` down further — which is the
-moment to move the phone rather than keep tapping. The steppers grey out at both ends for
-the same reason: a control that keeps counting while the internal clamp swallows the
-change is lying about having an effect.
+Two frequency spans are in play, and keeping them distinct is the whole design:
 
-Both rules are plotted in the bars' own units — decibels above the signal's own noise
-floor, over a 30 dB range. The bars measure against the FFT band floor and the rules
-against the envelope floor, so this compares headroom, not absolute level. Headroom is
-the question being asked.
+- **The graph** is the axis extent — a persisted setting, changed rarely, on the settings
+  screen. It never moves while the user is watching a signal.
+- **The search range** is what the decoder actually sweeps. It is narrowed live by
+  dragging dotted edges on the strip, and lasts only for the session.
+
+The strip is the right home for this because the user reaches for it reactively: they are
+watching a wrong lock happen and want it fixed now, not two screens away. Direct
+manipulation also removes a translation step — they can already see the artifact's
+position, so making them convert it into a number would be work the interface should do.
+
+Three rules make it legible:
+
+- **Excluded spectrum is dimmed, not hidden.** The user narrows the range precisely
+  because something out there was winning the lock. Hiding it would make the strip lie
+  about what is in the room, and the narrowing would look like it had done nothing.
+- **The axis belongs to the graph, not the range.** Bars stay put while the shading moves.
+  An axis rescaling under a dragging finger feels like the control fighting back.
+- **The edge wedges point inward,** into the searched side, so which way to drag needs no
+  legend.
+
+Gestures: drag an edge to move it; long-press a peak to isolate it (±60 Hz — the
+one-gesture form of "just decode this one"); double-tap to clear isolation and narrowing
+together. A `⟲` appears beside the range readout whenever it is non-default, because the
+undo gesture is invisible and the state must never be.
+
+Minimum span is 100 Hz. A range dragged shut would leave the decoder searching nothing.
+
+### The threshold is drawn, not just numbered — and exactly once
+
+`thr ±N dB` on its own is unreadable: the user cannot tell whether the tone is above or
+below the bar the decoder is applying. So the live keying threshold is drawn across the
+spectrum strip, in the bars' own units — decibels above the signal's own noise floor over
+a 30 dB range. (The bars measure against the FFT band floor and the rule against the
+envelope floor, so this compares headroom, not absolute level. Headroom is the question
+being asked.)
+
+**One rule, never two.** An earlier version also drew the threshold's lower travel limit
+as a dashed second line, to answer "will turning `thr` down help?". It answered that, and
+in exchange implied the decoder applies two thresholds — the first thing a user asks on
+seeing it is which of the two is real. A limit is a property of the control, not of the
+signal, so it is stated on the control: the steppers disable at each end and the readout
+reads `−10 dB min`. The strip shows only what the decoder is actually doing.
+
+The general rule this is an instance of: the spectrum strip carries *measurements of the
+signal*. Anything that is a fact about a control belongs beside that control.
 
 ### The lock timer is doing real work
 
@@ -95,14 +129,20 @@ Per P-4 these replace output rather than decorating it:
 Reachable from the status row (⚙) so it is available while idle and while listening.
 
 It holds only what depends on the **user's equipment**, not on the signal: the tone
-search-band ceiling is the first such value, because sidetone pitch and recording chain
-vary per operator and no default fits everyone. Decoder thresholds stay out — they were
-derived from measurements against real audio, and asking a user to tune them would be
-asking them to guess at something the project calibrated on purpose.
+graph's bounds are the first such value, because sidetone pitch and recording chain vary
+per operator and no default fits everyone. Decoder thresholds stay out — they were derived
+from measurements against real audio, and asking a user to tune them would be asking them
+to guess at something the project calibrated on purpose.
 
-Band changes apply to the running session immediately. The lock may be lost (the search
-restarts if the current tone falls outside the new band) but the transcript is kept —
-P-2 governs the decoder never retracting, and a settings change is not a retraction.
+This screen is for *exact*, the strip is for *fast*. They are the same state, not two
+controls: the screen sets the outer bounds, the strip narrows within them. It is also the
+accessible path to those values, since dragging an edge is not usable with a screen
+reader — which is reason enough to keep it even once the strip exists.
+
+Changes apply to the running session immediately and reset any live narrowing. The lock
+may be lost (the search restarts if the current tone falls outside the new bounds) but the
+transcript is kept — P-2 governs the decoder never retracting, and a settings change is
+not a retraction.
 
 ## Still to design
 

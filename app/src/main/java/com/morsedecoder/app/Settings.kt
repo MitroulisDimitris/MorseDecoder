@@ -11,44 +11,63 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * Only values that genuinely depend on the user's own equipment belong here — the
  * decoder's own thresholds are calibrated against measurements and are not a matter of
- * preference. The search-band ceiling qualifies: what tone a signal arrives on is a
- * property of the operator's sidetone and the recording chain, and no default can be
- * right for everyone (D-13).
+ * preference. The tone graph's bounds qualify: what frequency a signal arrives on is a
+ * property of the operator's sidetone and the recording chain (D-13).
+ *
+ * These bounds are the **outer** limits — the extent of the spectrum strip's axis and the
+ * widest the decoder will ever search. Narrowing the search *within* them is a live,
+ * per-session action taken on the strip itself, and is deliberately not persisted: a range
+ * narrowed to chase one stubborn signal should not silently still be narrow tomorrow.
  */
 object Settings {
 
     private const val PREFS = "morse_decoder_settings"
-    private const val KEY_BAND_MAX = "band_max_hz"
+    private const val KEY_GRAPH_MIN = "graph_min_hz"
+    private const val KEY_GRAPH_MAX = "graph_max_hz"
 
-    /** The band floor is not adjustable: below 300 Hz is mains and handling noise. */
-    const val BAND_MIN_HZ = Spectrum.DEFAULT_BAND_MIN_HZ
+    const val GRAPH_MIN_DEFAULT = Spectrum.DEFAULT_BAND_MIN_HZ
+    const val GRAPH_MAX_DEFAULT = Spectrum.DEFAULT_BAND_MAX_HZ
 
-    const val BAND_MAX_DEFAULT = Spectrum.DEFAULT_BAND_MAX_HZ
-    const val BAND_MAX_LOWEST = 1000.0
-    const val BAND_MAX_HIGHEST = 4000.0
-    const val BAND_MAX_STEP = 100.0
+    const val GRAPH_LOWEST = 100.0
+    const val GRAPH_HIGHEST = 4000.0
+    const val GRAPH_STEP = 100.0
 
-    private val _bandMaxHz = MutableStateFlow(BAND_MAX_DEFAULT)
-    val bandMaxHz: StateFlow<Double> get() = _bandMaxHz
+    /** The graph must stay wide enough to be worth drawing and to hold a search range. */
+    const val GRAPH_MIN_SPAN = 400.0
+
+    private val _graphMinHz = MutableStateFlow(GRAPH_MIN_DEFAULT)
+    private val _graphMaxHz = MutableStateFlow(GRAPH_MAX_DEFAULT)
+    val graphMinHz: StateFlow<Double> get() = _graphMinHz
+    val graphMaxHz: StateFlow<Double> get() = _graphMaxHz
 
     /** Call before first read; safe to call repeatedly. */
     fun load(context: Context) {
-        _bandMaxHz.value = prefs(context)
-            .getFloat(KEY_BAND_MAX, BAND_MAX_DEFAULT.toFloat())
-            .toDouble()
-            .coerceIn(BAND_MAX_LOWEST, BAND_MAX_HIGHEST)
+        val p = prefs(context)
+        val lo = p.getFloat(KEY_GRAPH_MIN, GRAPH_MIN_DEFAULT.toFloat()).toDouble()
+        val hi = p.getFloat(KEY_GRAPH_MAX, GRAPH_MAX_DEFAULT.toFloat()).toDouble()
+        _graphMinHz.value = lo.coerceIn(GRAPH_LOWEST, GRAPH_HIGHEST - GRAPH_MIN_SPAN)
+        _graphMaxHz.value = hi.coerceIn(_graphMinHz.value + GRAPH_MIN_SPAN, GRAPH_HIGHEST)
     }
 
+    fun setGraphMinHz(context: Context, hz: Double) =
+        apply(context, hz.coerceIn(GRAPH_LOWEST, _graphMaxHz.value - GRAPH_MIN_SPAN), _graphMaxHz.value)
+
+    fun setGraphMaxHz(context: Context, hz: Double) =
+        apply(context, _graphMinHz.value, hz.coerceIn(_graphMinHz.value + GRAPH_MIN_SPAN, GRAPH_HIGHEST))
+
     /**
-     * Applies immediately to a running session — the engine re-reads the band on its next
-     * sweep, so no lock or transcript is lost. A lock left above the new ceiling returns
-     * to searching rather than sitting on a frequency the sweep no longer covers.
+     * Widening or moving the graph resets any live narrowing to the full new extent.
+     * Keeping a stale narrowing inside freshly-moved bounds would leave the decoder
+     * searching a range the user can no longer see the reason for.
      */
-    fun setBandMaxHz(context: Context, hz: Double) {
-        val value = hz.coerceIn(BAND_MAX_LOWEST, BAND_MAX_HIGHEST)
-        _bandMaxHz.value = value
-        prefs(context).edit().putFloat(KEY_BAND_MAX, value.toFloat()).apply()
-        DecoderService.setBandMaxHz(value)
+    private fun apply(context: Context, lo: Double, hi: Double) {
+        _graphMinHz.value = lo
+        _graphMaxHz.value = hi
+        prefs(context).edit()
+            .putFloat(KEY_GRAPH_MIN, lo.toFloat())
+            .putFloat(KEY_GRAPH_MAX, hi.toFloat())
+            .apply()
+        DecoderService.setSearchRange(lo, hi)
     }
 
     private fun prefs(context: Context) =

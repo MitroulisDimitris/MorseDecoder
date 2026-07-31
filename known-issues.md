@@ -7,6 +7,12 @@ Numbers quoted as "measured" come from a real 72-second phone recording of on-ai
 (1882 Hz, ~17 WPM, moderate fading) unless stated otherwise. It is the only real-world
 sample the project has, which is itself issue **G-1**.
 
+Every defect below has at least one test asserting the behaviour we want, marked
+`@KnownFailure("D-n")`. Those tests fail today and are counted in a summary at the end of
+each test run, so this file and the suite cannot drift apart: fix a defect and its test
+starts passing, which **fails the build** until the annotation and the entry here are both
+removed.
+
 Severity is about what a user experiences, not how hard the fix is:
 
 | | Meaning |
@@ -32,6 +38,18 @@ within-cluster tightness. An estimate anchored to the wrong *scale* preserves al
 perfectly — halve the unit and true dots read as 2 units, dashes as 6, still two tight
 clusters at 3:1. The model fits its own measurements beautifully; the measurements are
 just referred to the wrong unit.
+
+**Reproducible synthetically** — no longer only visible on the one real clip. Two bench
+scenarios (`BENCH=1 gradlew :core:test --tests "*DecoderBench*" -i`) exhibit it:
+
+| Scenario | Path | True speed | Reported | Chars vs ref | CER | Gate |
+|---|---|---|---|---|---|---|
+| `hand-13-rough` | live | 13 WPM | **53 WPM** | 145 vs 62 | 251 % | never engaged |
+| `qsb-impulse` | file | 18 WPM | **60 WPM** (clamped) | 121 vs 62 | 168 % | n/a |
+
+The bench's starkest result is negative space: **`outputSuppressed` was false in all 16
+scenarios**, including those two. The output gate is inert against scale error across the
+entire matrix, which is what makes this a capability gap rather than a tuning problem.
 
 This is D-8's stated scope ("it never inspects whether the input is Morse") meeting a
 consequence D-8 does not record: **an octave-type unit error is invisible to every
@@ -76,7 +94,10 @@ from a bad start without abandoning the streaming architecture.
 
 ---
 
-## D-3 — The mains veto blocks every common sidetone · High
+## D-3 — The mains veto costs tone-readout accuracy, not decoding · Low
+
+**Downgraded from High after measurement. The original claim below was wrong**, and it is
+kept because the correction is the useful part.
 
 `isMainsHarmonic` (`LiveDecoderEngine.kt:915`) rejects ±5 Hz around every multiple of
 both 50 Hz and 60 Hz. Across 300–1200 Hz that is **325 of 901 integer frequencies (36 %)**,
@@ -97,15 +118,32 @@ multiples, not fewer.
 It has stayed invisible because every synthetic fixture uses an off-round tone — 588,
 612, 685, 704, 742, 890, 1462, 1882 Hz. Nothing in the suite sends on 600.
 
-The requirement's own comment claims a keyed signal at 600 Hz "locks via its sidebands and
-tracks in". That is doubtful at the working resolution: with a 4096-point FFT at 16 kHz
-the bins are 3.9 Hz and a Hann main lobe spans about four of them, so keying sidebands at
-±7 Hz merge into the vetoed main peak rather than appearing as separate maxima. **Untested
-either way** — worth an experiment before any redesign.
+### The correction
 
-Proposed fix: restrict the veto to low-order harmonics (≤ 8th, so below roughly 500 Hz)
-and tighten to ±3 Hz, letting D-13's keying screen reject steady hum on its merits
-anywhere above that. Amends FR-2.5, so it needs a decision, not just a patch.
+FR-2.5's own comment claims a keyed signal at a vetoed frequency "locks via its sidebands
+and tracks in". I argued that was doubtful — 3.9 Hz bins and a Hann main lobe about four
+bins wide should merge ±7 Hz keying sidebands into the vetoed main peak — and flagged it
+untested. The bench tested it, and **the spec was right**:
+
+| Scenario | Path | Tone error | CER |
+|---|---|---|---|
+| `tone-700-mains` (700 Hz, a 50 **and** 60 Hz multiple) | live | **0.1 Hz** | 2.5 % |
+| `tone-700-mains` | file | 0.1 Hz | 0.0 % |
+
+Acquisition happens at a nearby non-vetoed peak and the tracking EMA then walks the lock
+onto the true frequency, which the veto does not prevent — it only forbids *acquiring*
+within ±5 Hz, not *arriving* there. Decoding at a round sidetone is unaffected.
+
+### What is actually wrong
+
+A real but much smaller cost: the tone **readout** can settle off-target. `tone-420`
+(420 Hz, a 60 Hz multiple) locked **19.5 Hz off** while still decoding at 2.5 % CER. The
+lock is good enough to decode and the displayed frequency is wrong by enough to matter if
+the user is using it to tune a radio.
+
+Fix, if it is worth one: restrict the veto to low-order harmonics (≤ 8th, so below roughly
+500 Hz) and tighten to ±3 Hz, letting D-13's keying screen reject steady hum on its merits
+above that. Amends FR-2.5, so it needs a decision. At Low severity there is no hurry.
 
 ---
 
@@ -136,6 +174,130 @@ placeholder being shown as a measurement. Both mislead in the same direction.
 Fix: render `—` until `obsFit.ready`, and surface a state for "locked, nothing decoding".
 The engine-side half of this landed with D-13 (an unproven lock is now abandoned), but the
 UI still shows no explanation while it happens.
+
+---
+
+## D-6 — A rough fist at 13 WPM is decoded catastrophically · High
+
+`hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is the
+worst scenario in the bench by a wide margin, and it fails differently in each path:
+
+- **file** — emits **nothing at all** (0 characters).
+- **live** — emits **145 characters against a 62-character reference**, at a reported
+  53 WPM when the truth is 13. CER 251 %.
+
+These are the two halves of the same problem. The unit estimate lands roughly 4× short, so
+every dash reads as a string of dots; the file path's `fitQuality < 0.12` guard then
+declines outright, while the live path sails past because its own scale error keeps the
+clusters looking clean (**D-1**).
+
+The impairment levels are aggressive but not unrealistic — this is what a beginner on a
+straight key in a noisy room looks like, which is squarely inside the intended use.
+
+Worth checking whether the two-means bootstrap in `MorseDecoder.twoMeansSeed` /
+`LiveDecoderEngine.initFromBootstrap` is seeding on a dot/dash split or on a
+jitter-induced split *within* the dot cluster.
+
+---
+
+## D-7 — Below the SNR floor the decoder invents text rather than declining · Medium
+
+`noise-20@-5` (machine-sent at −5 dB, below the promised AC-2 floor) produces 101
+characters against a 62-character reference on the live path — CER 108 %.
+
+Accuracy targets are explicitly void below 0 dB, so being *wrong* here is allowed. Being
+*confidently verbose* is not: P-4 asks for a decoder that declines rather than one that
+produces plausible-looking output from unusable input. Neither the low-signal guard nor
+the fit gate engaged.
+
+---
+
+## D-8 — Speech and RTTY decode as Morse · High
+
+Audio that is not Morse produces invented text. Measured over 20 s fixtures
+(`NonMorseTest`):
+
+| Input | live chars | file chars |
+|---|---|---|
+| speech (syllabic rhythm, no keying) | 26 | 31 |
+| RTTY (45 baud FSK) | **70** | **124** |
+| overloaded/clipping input | 10 | 19 |
+| speech + mains hum | 22 | 0 |
+| music + noise | 50 | 0 |
+| knocking / handling noise | 0 | 30 |
+
+Silence, white and pink noise, a steady carrier, mains hum alone, and music alone all
+correctly produce nothing, so the low-signal guard and D-13's keying screen are doing
+their share. What gets through is anything with *keyed-looking envelope structure*.
+
+**This cannot be fixed by tuning the output gate, and that is now measured rather than
+argued.** Over the same fixtures, `modelFitQuality` scores:
+
+| | p10 | p50 | p90 |
+|---|---|---|---|
+| RTTY (not Morse) | 0.70 | 0.75 | 0.76 |
+| hand-sent Morse at +10 dB (legitimate) | 0.64 | 0.78 | 0.88 |
+
+RTTY's distribution sits *entirely inside* the legitimate one. No threshold admits real
+hand-sent Morse and rejects RTTY. `NonMorseTest` pins this as an explicit negative
+assertion so nobody concludes the gate merely needs a better number.
+
+Why RTTY is so convincing: runs of *k* identical bits produce marks of *k* × 22 ms, so the
+durations really are multi-modal and a two-cluster fit lands near 3:1 — the exact structure
+`fitQuality` is looking for. It is not being fooled; it is answering the question D-8 says
+it answers ("does my model fit my measurements?"), which is not the question being asked.
+
+Two further holes in the same area, visible in the measurements:
+
+- **Emission begins before the fit window is ready.** `clipping` and `speech+hum` emitted
+  10 and 22 characters with *zero* fit samples recorded — the gate was never consulted
+  (see **D-5**). Requiring positive evidence before emitting would close this, at the cost
+  of roughly the first 6–7 characters of every genuine transmission.
+- The rejected "is this Morse?" classifier (**D-8** in `decisions.md`) was cut as not worth
+  the complexity. This evidence is an argument to revisit that decision; a modality test
+  over the duration histogram is what separates RTTY's flat/multi-modal spread from Morse's
+  bimodal one.
+
+---
+
+## D-9 — A tone change mid-session strands the lock permanently · High
+
+The operator moves frequency, or the user tunes the radio. Measured: a jump from 612 Hz to
+1150 Hz mid-session yields **2 characters** for the whole second transmission, and the lock
+never leaves 612 Hz. Only a manual Re-lock recovers it.
+
+It is a deadlock between two guards that are each individually correct:
+
+- the automatic re-lock needs `poorElements` to accumulate (FR-2.10.1, counting elements
+  not seconds — D-7), but a lock on a now-empty frequency produces *no elements*, so the
+  counter never advances;
+- FR-2.10.2 suspends the check entirely while `lowSignal` holds, which it does.
+
+D-13's dead-end recovery breaks exactly this tie, but was deliberately scoped to locks that
+had **never** decoded anything. This lock had, so it is excluded.
+
+The fix has a real trade-off, which is why it is not already done: extending recovery to
+proven locks means a lock could be taken away during a legitimate pause if another station
+is active elsewhere — precisely the asymmetry D-7 chose to avoid. A defensible shape is
+"re-lock only if the current lock has produced nothing for N seconds **and** a keyed peak
+exists elsewhere in the band", which stays safe for AC-9 because silence offers no keyed
+peak. Needs a decision on N and on whether to accept the D-7 trade at all.
+
+---
+
+## D-10 — Tone readout stays off after recovering from a wrong lock · Medium
+
+After the decoder recovers from a lock taken on room noise, the tracked frequency settles
+well away from the true tone and stays there: measured **~76 Hz low** on a 612 Hz signal.
+
+Decoding is unaffected — the 10 ms analysis window is roughly 100 Hz wide, so the keying
+envelope survives the offset, and the tail of that decode is clean. But the `tone` readout
+and the spectrum lock marker are simply wrong, which matters to anyone using them to tune a
+radio, and the margin against a genuinely lost lock is much thinner than it looks.
+
+Related to **D-3**, where a mains-vetoed frequency settles ~20 Hz off for a different
+reason. Both suggest the tracking EMA has no mechanism to re-centre once it is off by more
+than the hysteresis window (`trackWindowHz` = 15 Hz).
 
 ---
 

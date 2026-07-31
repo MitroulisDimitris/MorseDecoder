@@ -20,6 +20,11 @@ class FrontEnd(
     private val hopMs: Double = 2.5,
     private val bandMinHz: Double = Spectrum.DEFAULT_BAND_MIN_HZ,
     private val bandMaxHz: Double = Spectrum.DEFAULT_BAND_MAX_HZ,
+    /**
+     * Prefer a keyed peak over merely the loudest one (D-13). Flag-gated so the choice
+     * can be ablated in the bench — an unmeasurable change is one nobody can defend.
+     */
+    private val preferKeyedTone: Boolean = true,
 ) {
 
     /** One mark or gap with its position on the session clock. */
@@ -92,6 +97,7 @@ class FrontEnd(
      * below and `modelFitQuality` remain the honest-failure path (P-4).
      */
     private fun chooseTone(samples: FloatArray, sr: Int): Double? {
+        if (!preferKeyedTone) return Spectrum.estimateToneHz(samples, sr, bandMinHz, bandMaxHz)
         val candidates = Spectrum.candidateTones(samples, sr, bandMinHz, bandMaxHz)
         if (candidates.isEmpty()) return Spectrum.estimateToneHz(samples, sr, bandMinHz, bandMaxHz)
         val keyed = candidates.firstOrNull {

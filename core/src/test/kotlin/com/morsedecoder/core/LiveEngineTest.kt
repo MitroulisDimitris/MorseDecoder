@@ -359,6 +359,54 @@ class LiveEngineTest {
     }
 
     /**
+     * The search range is user-draggable, so its clamps are load-bearing: a range dragged
+     * shut would leave the decoder searching nothing, with no way back except reset.
+     */
+    @Test
+    fun `search range keeps a 100 Hz minimum span in both directions`() {
+        val engine = LiveDecoderEngine()
+        engine.bandMinHz = 1990.0                       // driven up against the ceiling
+        assertTrue(engine.bandMaxHz - engine.bandMinHz >= 100.0) {
+            "span collapsed to ${engine.bandMaxHz - engine.bandMinHz} Hz"
+        }
+
+        val engine2 = LiveDecoderEngine()
+        engine2.bandMaxHz = 310.0                       // driven down against the floor
+        assertTrue(engine2.bandMaxHz - engine2.bandMinHz >= 100.0) {
+            "span collapsed to ${engine2.bandMaxHz - engine2.bandMinHz} Hz"
+        }
+    }
+
+    /** A narrowed range must not leave a chip offering the tone it just excluded. */
+    @Test
+    fun `candidates outside the search range are not offered`() {
+        val genA = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 18.0, toneHz = 612.0, amplitude = 0.5, seed = 107L)
+        )
+        val genB = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 22.0, toneHz = 890.0, amplitude = 0.22, seed = 109L)
+        )
+        val n = maxOf(genA.samples.size, genB.samples.size)
+        val mixed = FloatArray(n) {
+            var v = 0f
+            if (it < genA.samples.size) v += genA.samples[it]
+            if (it < genB.samples.size) v += genB.samples[it]
+            v.coerceIn(-1f, 1f)
+        }
+
+        val engine = LiveDecoderEngine()
+        feedInChunks(engine, mixed.copyOfRange(0, 10 * 16_000))
+        assertTrue(engine.candidates.any { abs(it - 890.0) < 20.0 }) {
+            "fixture did not produce the 890 Hz candidate: ${engine.candidates}"
+        }
+
+        engine.bandMaxHz = 800.0
+        assertTrue(engine.candidates.none { it > 800.0 }) {
+            "still offering ${engine.candidates} after the range excluded them"
+        }
+    }
+
+    /**
      * A tone above the old 1200 Hz ceiling — the field report that prompted F1, where a
      * phone recording carried its CW note at 1882 Hz.
      *
@@ -487,8 +535,9 @@ class LiveEngineTest {
     }
 
     /**
-     * The threshold rules on the spectrum strip are only readable against the bars if the
-     * minimum sits at or below the live threshold and both stay on the 0..1 bar scale.
+     * The threshold rule is only readable against the bars if it is published on the same
+     * 0..1 scale they are. Only the live threshold is drawn — a second rule for the
+     * control's travel limit implied a second threshold and was removed.
      */
     @Test
     fun `threshold telemetry stays on the spectrum bar scale`() {
@@ -500,11 +549,7 @@ class LiveEngineTest {
         engine.finish()
 
         assertTrue(engine.thresholdNorm in 0f..1f) { "thresholdNorm ${engine.thresholdNorm}" }
-        assertTrue(engine.thresholdMinNorm in 0f..1f) { "thresholdMinNorm ${engine.thresholdMinNorm}" }
         assertTrue(engine.thresholdNorm > 0f) { "no threshold telemetry was published" }
-        assertTrue(engine.thresholdMinNorm <= engine.thresholdNorm + 1e-6) {
-            "minimum ${engine.thresholdMinNorm} sits above the live threshold ${engine.thresholdNorm}"
-        }
     }
 
     @Test
