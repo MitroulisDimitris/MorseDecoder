@@ -188,7 +188,8 @@ worst scenario in the bench by a wide margin, and it fails differently in each p
 
 - **file** — emits **nothing at all** (0 characters).
 - **live** — emits **145 characters against a 62-character reference**, at a reported
-  53 WPM when the truth is 13. CER 251 %.
+  53 WPM when the truth is 13. CER 251 %. D-16 took this to 194 against 99 on the longer
+  fixture (CER 308 % → 207 %) — materially better, still broken.
 
 These are the two halves of the same problem. The unit estimate lands roughly 4× short, so
 every dash reads as a string of dots; the file path's `fitQuality < 0.12` guard then
@@ -204,15 +205,27 @@ jitter-induced split *within* the dot cluster.
 
 ---
 
-## D-7 — Below the SNR floor the decoder invents text rather than declining · Medium
+## D-7 — Below the SNR floor the decoder invented text rather than declining · FIXED
 
-`noise-20@-5` (machine-sent at −5 dB, below the promised AC-2 floor) produces 101
-characters against a 62-character reference on the live path — CER 108 %.
+At −5 dB the live path emitted **167 characters against 99 sent** (CER 108 %). Accuracy
+targets are void below 0 dB so being *wrong* was allowed; being confidently verbose was
+not (P-4).
 
-Accuracy targets are explicitly void below 0 dB, so being *wrong* here is allowed. Being
-*confidently verbose* is not: P-4 asks for a decoder that declines rather than one that
-produces plausible-looking output from unusable input. Neither the low-signal guard nor
-the fit gate engaged.
+Closed by D-16: characters computed from a speed estimate pinned at the physical clamp are
+no longer emitted. Measured, live path:
+
+| | chars (99 sent) | CER |
+|---|---|---|
+| +10 dB, before / after | 98 / 98 | 1.6 % / 1.6 % |
+| 0 dB, before / after | 98 / 98 | 1.6 % / 1.6 % |
+| **−5 dB, before / after** | **167 / 80** | **107.9 % / 38.1 %** |
+
+Nothing changes at or above 0 dB — the gate only engages where the estimator has stopped
+measuring. Bench mean fell from 29.0 % to 17.9 % on the strength of this scenario and
+`hand-13-rough`.
+
+Covered by `HonestFailureTest`; a genuine 45 WPM sender still decodes and is merely
+flagged, so FR-5.7's best-effort band is untouched.
 
 ---
 

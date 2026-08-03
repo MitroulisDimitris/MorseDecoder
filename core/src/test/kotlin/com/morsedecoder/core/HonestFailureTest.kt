@@ -98,10 +98,12 @@ class HonestFailureTest {
      * Below the calibrated SNR floor, accuracy targets are explicitly void — being *wrong*
      * is allowed. Being confidently verbose is not: P-4 asks for a decoder that declines
      * rather than one that produces plausible-looking output from unusable input.
-     * Measured today: 101 characters against a 62-character reference at −5 dB.
+     *
+     * Closed by D-16: characters computed from a speed estimate pinned at the physical
+     * clamp are no longer emitted. At −5 dB that took output from 167 characters against
+     * 99 sent (CER 108 %) down to 80 (CER 38 %), with no change at all at 0 dB or above.
      */
     @Test
-    @KnownFailure("D-7", "below the SNR floor the decoder invents text")
     fun `below the SNR floor the decoder declines rather than inventing text`() {
         val gen = SyntheticMorseGenerator.generate(
             Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = -5.0, seed = 14L)
@@ -124,15 +126,15 @@ class HonestFailureTest {
      */
     @Test
     fun `the out-of-range flag agrees with the reported speed`() {
-        // Fading plus static drives the estimate to the 60 WPM clamp — far outside 5-40.
+        // A genuine contest-speed sender: above the 5-40 calibrated band, below the 60 WPM
+        // physical clamp. Exactly the case FR-5.7's flag exists for — decoded best-effort
+        // and labelled, not suppressed (D-16).
         val gen = SyntheticMorseGenerator.generate(
-            Config(
-                text = text, wpm = 18.0, toneHz = 612.0, snrDb = 8.0,
-                fadingDepth = 0.6, fadingRateHz = 0.15, impulsesPerSecond = 2.0, seed = 23L,
-            )
+            Config(text = text, wpm = 45.0, toneHz = 612.0, snrDb = 10.0, seed = 42L)
         )
         val result = MorseDecoder().decodeFile(FloatArrayPcmSource(gen.samples, gen.sampleRate))
-        assertTrue(result.wpm > 40.0) { "fixture no longer drives the speed out of band" }
+        assertTrue(result.wpm > 40.0) { "fixture decoded at ${result.wpm} WPM, inside the band" }
+        assertTrue(result.chars.isNotEmpty()) { "a 45 WPM sender must still be decoded (FR-5.7)" }
         assertTrue(result.outOfCalibratedRange) {
             "reported ${"%.1f".format(result.wpm)} WPM without flagging it out of range"
         }

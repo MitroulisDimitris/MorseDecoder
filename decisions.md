@@ -360,3 +360,61 @@ energy. Without that, changing N mid-stream would jump the scale by (N₂/N₁)�
 the rolling percentile floor the keying threshold rides on. Everything downstream works in
 ratios and is unaffected; only the absolute "is this silence" guards shift, and they sit
 far below any real signal either way.
+
+---
+
+## D-16 — Suppress output while the speed estimate is clamped, and only then
+
+The plan said "treat out-of-band speed as a suppression condition". Measurement says that
+is not implementable, and the narrower rule that survives is worth more than it sounds.
+
+### Why the obvious version fails
+
+The speed *value* carries no information about correctness in the region that matters:
+
+| | reported speed | result |
+|---|---|---|
+| synthetic 50 WPM | 53.6 WPM | **0 % CER** — perfect |
+| RTTY | 52.9 WPM | garbage, 177 characters |
+| rough 13 WPM fist | 16.3 WPM — inside the band | 57 % CER |
+
+Same speed, opposite verdicts. A threshold anywhere near 40–55 WPM would gag genuine
+contest operators (D-1's own table lists QRQ at 40–60+ WPM) while still passing RTTY, and
+it would miss the rough-fist case entirely because that one reads *inside* the band.
+
+FR-5.7 also asks explicitly for best-effort decoding outside 5–40 with a flag, so the
+literal rule would have contradicted the spec.
+
+A second idea died on the way: comparing the pass-1 bootstrap unit against the pass-2
+Kalman unit, on the theory that agreement is evidence. It is not — the bootstrap is 4×
+off even on decodes that come out at 0 % CER, by design (`MorseDecoder` notes it is "only
+good to a factor of ~2"). Clean decodes disagree by 4.1–4.3×; the rough fist disagrees by
+1.22×. The signal is *anti*-correlated with quality.
+
+### What survives
+
+Suppress while the unit is pinned at the [KalmanUnit] clamp. D-11 already established that
+a clamped estimate is a bound being enforced rather than a measurement, and refuses to
+*display* it; this extends the same reasoning to the characters computed from it. If the
+number is not a measurement, neither is anything derived from it.
+
+This is narrower than "outside the calibrated band" on purpose. 5–40 is where we stop
+promising accuracy; the clamp is where the estimator stops measuring. Only the second
+implies the output is meaningless.
+
+### Measured
+
+Live path, 99 characters sent:
+
+| | before | after |
+|---|---|---|
+| +10 dB | 98 chars, 1.6 % | 98 chars, 1.6 % |
+| 0 dB | 98 chars, 1.6 % | 98 chars, 1.6 % |
+| −5 dB | 167 chars, 108 % | **80 chars, 38 %** |
+| rough 13 WPM fist | 274 chars, 308 % | 194 chars, 207 % |
+
+Nothing at all in conditions the decoder handles; a large improvement where it does not.
+Bench mean 29.0 % → 17.9 %. Closes D-7 and improves D-6 without closing it.
+
+A genuine 45 WPM sender is unaffected — decoded, flagged out of range, not suppressed —
+which is the FR-5.7 behaviour the broad version would have destroyed.

@@ -45,6 +45,11 @@ class LiveDecoderEngine(
          *
          * false = fixed 10 ms, the pre-FR-2.7 behaviour, kept for A/B in the bench.
          */
+        /**
+         * Hold output back while the speed estimate is pinned at the physical ceiling
+         * (D-11). false = emit anyway, for A/B in the bench.
+         */
+        val suppressAtSpeedClamp: Boolean = true,
         val adaptiveWindow: Boolean = true,
         /** Window as a fraction of the dot. A quarter leaves four frames inside a dot. */
         val windowDotFraction: Double = 0.25,
@@ -691,6 +696,17 @@ class LiveDecoderEngine(
             // here — never emitted, so the append-only transcript (P-2) is untouched; the
             // present-tense principle (P-5) makes a never-shown character a non-event.
             if (cfg.outputGateEnabled && outputSuppressed) continue
+            // A unit pinned against the speed clamp is a bound being enforced, not a
+            // measurement (D-11), so every character derived from it is derived from a
+            // non-measurement. D-11 already refuses to *display* a clamped speed; the
+            // same reasoning refuses to emit characters computed with one.
+            //
+            // Deliberately narrower than "outside the 5-40 calibrated band". FR-5.7 asks
+            // for best-effort decoding there, and measurement backs it: 50 WPM synthetic
+            // code decodes at 0 % CER while RTTY at 52.9 WPM is garbage. Speed carries no
+            // information about correctness in that overlap. Only the clamp does, because
+            // it means the estimator stopped measuring.
+            if (cfg.suppressAtSpeedClamp && speedImplausible) continue
             transcript.add(ch)
             charsSinceLock++
             events.add(Event.CharDecoded(ch))

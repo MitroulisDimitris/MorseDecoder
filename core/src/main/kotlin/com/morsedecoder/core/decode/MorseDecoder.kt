@@ -102,6 +102,13 @@ class MorseDecoder(
         for (run in runs) decoder.feed(run)
         decoder.flush()
 
+        // A unit pinned at the speed clamp is a bound being enforced, not a measurement
+        // (D-11) — every character derived from it comes from a non-measurement, so the
+        // file path declines rather than reporting them. Narrower than "outside 5-40",
+        // which FR-5.7 asks to decode best-effort and which measurement shows carries no
+        // information about correctness: 50 WPM code decodes perfectly at that speed.
+        if (kalman.atSpeedCeiling) return empty(fe.toneHz)
+
         val chars = decoder.output
         val text = assembleText(chars, assists.cutNumbers)
 
