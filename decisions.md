@@ -300,3 +300,63 @@ range is non-default. The undo gesture (double-tap) is invisible, so the state m
 | Settings only | Fails the use case, which is reactive. |
 
 Minimum span is 100 Hz: a range dragged shut leaves the decoder searching nothing.
+
+---
+
+## D-15 — The analysis window follows the speed (FR-2.7, finally)
+
+FR-2.7 always said the window "adapts once a speed estimate exists". It never did:
+`windowMs` was a fixed 10 ms from the first commit. fldigi ships a matched filter whose
+width tracks the current WPM, so the idea is well precedented (`prior-art.md`).
+
+The physics: a Goertzel over N samples is roughly `sampleRate/N` wide. At 16 kHz, 10 ms is
+a **100 Hz filter**. That is correct at 40 WPM — a dot is 30 ms and the window must stay
+short enough to resolve one — and at 7 WPM, where a dot is 171 ms, it is 17× wider than
+necessary and admits 100 Hz of noise to measure a 171 ms element.
+
+The window is now a quarter of a dot, clamped to 10–40 ms, rebuilt when the target moves
+more than 25 % (hysteresis: a rebuild perturbs the envelope distribution the percentile
+floor is built from, and there is no value chasing a Kalman estimate still settling).
+
+### What it actually bought
+
+Measured across speed × SNR, three seeds each, adaptive versus fixed:
+
+| WPM | +3 dB | 0 dB | −3 dB | −6 dB |
+|---|---|---|---|---|
+| 7 | — | — | — | **−24.6** |
+| 10 | — | — | −2.9 | **−27.0** |
+| 15 | — | — | — | −2.4 |
+| 20 | — | — | — | −5.8 |
+| 30 | — | — | — | — |
+
+(CER percentage points; negative is better, — is identical.)
+
+**Nothing above −3 dB, where the decoder already works. Real gains at the cliff**, the
+largest being 10 WPM at −6 dB going from 38.4 % to 11.4 % — unusable to usable. Nothing at
+30 WPM, correctly: the target window there is already at the 10 ms floor, so there is
+nothing to widen.
+
+That shape is the honest summary: this does not make good conditions better, it moves the
+edge of the envelope. Worth having in an app pointed at a room by a phone microphone,
+where marginal SNR is the normal case rather than the exception.
+
+### Two things it did not do
+
+**It does not help D-10**, contrary to what `prior-art.md` originally claimed. The tone
+lock comes from the 4096-point FFT peak search; the Goertzel window has no bearing on it.
+A wide window *masks* an off-frequency lock rather than causing one, so narrowing it makes
+D-10 more consequential. Measured: the D-10 known-failure test fails by the same margin.
+
+**It is not implemented on the file path.** That path is two-pass and fits its parameters
+over the whole recording, reaching the same end another way — it already decodes the −5 dB
+bench scenario at 0 % CER, so there is no headroom to recover. Adding a second envelope
+pass there would be complexity without a measurable payer.
+
+### One prerequisite worth noting
+
+`Goertzel.power` is now normalised by window length, returning mean power rather than total
+energy. Without that, changing N mid-stream would jump the scale by (N₂/N₁)² and invalidate
+the rolling percentile floor the keying threshold rides on. Everything downstream works in
+ratios and is unaffected; only the absolute "is this silence" guards shift, and they sit
+far below any real signal either way.

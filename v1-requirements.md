@@ -102,7 +102,10 @@ with a principle here, the principle wins and the requirement is wrong.
 - **FR-2.5** Do not lock within ±5 Hz of a 50 Hz or 60 Hz mains harmonic without an
   explicit user override. 600 Hz is a harmonic of both.
 - **FR-2.7** Analysis window nominally 10 ms with 50–75 % overlap, hop 2–5 ms; window
-  length adapts once a speed estimate exists.
+  length adapts once a speed estimate exists — a quarter of a dot, clamped to 10–40 ms.
+  Implemented on the live path (D-15). The file path is two-pass and fits its parameters
+  over the whole recording, which reaches the same end by another route; measured, it has
+  no headroom left to gain here.
 
 #### Lock state machine
 

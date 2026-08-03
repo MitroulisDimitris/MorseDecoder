@@ -35,6 +35,26 @@ class LiveDecoderEngine(
     data class Config(
         val windowMs: Double = 10.0,
         val hopMs: Double = 2.5,           // FR-2.7
+        /**
+         * FR-2.7: adapt the analysis window once a speed estimate exists.
+         *
+         * A Goertzel over N samples is roughly sampleRate/N wide, so the 10 ms default is
+         * a ~100 Hz filter. That is right at 40 WPM, where a dot is 30 ms and the window
+         * must stay short enough to resolve one — and 17x wider than necessary at 7 WPM,
+         * where it admits noise across 100 Hz to measure a 171 ms element.
+         *
+         * false = fixed 10 ms, the pre-FR-2.7 behaviour, kept for A/B in the bench.
+         */
+        val adaptiveWindow: Boolean = true,
+        /** Window as a fraction of the dot. A quarter leaves four frames inside a dot. */
+        val windowDotFraction: Double = 0.25,
+        val windowMinMs: Double = 10.0,
+        /**
+         * Ceiling on the window. Beyond this the filter narrows past the tracker's own
+         * tolerance (`trackWindowHz` = 15 Hz) and a lock sitting slightly off — which
+         * D-10 says happens — would lose the signal it is currently getting away with.
+         */
+        val windowMaxMs: Double = 40.0,
         val sweepIntervalMs: Double = 100.0,
         val fftSize: Int = 4096,
         val bandMinHz: Double = Spectrum.DEFAULT_BAND_MIN_HZ,  // FR-2.1
@@ -268,14 +288,15 @@ class LiveDecoderEngine(
     fun nowMs(): Double = totalSamples * 1000.0 / sampleRate
 
     // ---- internals ----
-    private val win = (cfg.windowMs * sampleRate / 1000.0).toInt()
+    private val maxWin = (cfg.windowMaxMs * sampleRate / 1000.0).toInt()
+    private var win = (cfg.windowMs * sampleRate / 1000.0).toInt()
     private val hop = (cfg.hopMs * sampleRate / 1000.0).toInt()
     private val ringSize = 16_384
     private val ring = FloatArray(ringSize)
     private var totalSamples = 0L
     private var nextFrameStart = 0L
     private var nextSweepMs = 0.0
-    private val frameScratch = FloatArray(win)
+    private val frameScratch = FloatArray(maxWin)   // sized for the widest window FR-2.7 allows
 
     private var goertzel: Goertzel? = null
     private val envRing = RollingPercentiles((cfg.floorWindowMs / cfg.hopMs).toInt())
@@ -502,6 +523,26 @@ class LiveDecoderEngine(
         }
     }
 
+    /**
+     * FR-2.7: match the analysis window to the speed once one is known.
+     *
+     * Hysteresis on both sides, because a rebuild throws away the Goertzel table and
+     * perturbs the envelope distribution the percentile floor is built from; there is no
+     * value in chasing a Kalman estimate that is still settling.
+     */
+    private fun updateWindowForSpeed() {
+        if (!cfg.adaptiveWindow) return
+        val unit = kalman?.unitMs ?: return
+        val targetMs = (unit * cfg.windowDotFraction)
+            .coerceIn(cfg.windowMinMs, cfg.windowMaxMs)
+        val target = (targetMs * sampleRate / 1000.0).toInt().coerceIn(8, maxWin)
+        if (target > win * 1.25 || target < win * 0.8) {
+            win = target
+            goertzel = Goertzel(sampleRate, toneHz, win)
+            goertzelFreq = toneHz
+        }
+    }
+
     private fun closeCurrentRun() {
         val end = nextFrameStart
         if (end > runStartSample) {
@@ -586,6 +627,8 @@ class LiveDecoderEngine(
                 }
             }
         }
+
+        updateWindowForSpeed()
 
         val dec = decoder
         if (dec == null) {

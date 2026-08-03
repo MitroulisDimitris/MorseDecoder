@@ -111,6 +111,7 @@ class DecoderBench {
         val d = LiveDecoderEngine.Config()
         return listOf(
             Variant("current", d),
+            Variant("fixedWin", d.copy(adaptiveWindow = false)),   // pre-FR-2.7
             Variant("noKeyGate", d.copy(requireKeyingToLock = false)),
             Variant("noDeadEnd", d.copy(unprovenLockMs = Double.MAX_VALUE, unkeyedLockSweeps = Int.MAX_VALUE)),
             Variant("band1200", d.copy(bandMaxHz = 1200.0)),

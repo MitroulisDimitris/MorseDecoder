@@ -25,7 +25,18 @@ class Goertzel(sampleRate: Int, freqHz: Double, windowSize: Int) {
         }
     }
 
-    /** Signal power at the target frequency over one window starting at [start]. */
+    private val norm = 1.0 / (windowSize.toDouble() * windowSize)
+
+    /**
+     * Signal power at the target frequency over one window starting at [start].
+     *
+     * Normalised by window length, so the value is mean power rather than total energy.
+     * That matters because FR-2.7 changes the window length mid-stream: without this the
+     * scale would jump by (N₂/N₁)² at the moment of the change, invalidating the rolling
+     * percentile floor the keying threshold rides on. Everything downstream works in
+     * ratios, so only the absolute "is this silence" guards see the difference, and they
+     * sit far below any real signal either way.
+     */
     fun power(samples: FloatArray, start: Int): Double {
         var re = 0.0
         var im = 0.0
@@ -34,6 +45,6 @@ class Goertzel(sampleRate: Int, freqHz: Double, windowSize: Int) {
             re += s * wCos[n]
             im += s * wSin[n]
         }
-        return re * re + im * im
+        return (re * re + im * im) * norm
     }
 }

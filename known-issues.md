@@ -251,6 +251,50 @@ durations really are multi-modal and a two-cluster fit lands near 3:1 — the ex
 `fitQuality` is looking for. It is not being fooled; it is answering the question D-8 says
 it answers ("does my model fit my measurements?"), which is not the question being asked.
 
+### Measured: a structure test is partly viable, and synthetic data alone would mislead
+
+`StructureBench` (`BENCH=1 … --tests "*StructureBench*"`) measures four cheap statistics
+over the timing distribution, looking for one that separates where `fitQuality` cannot.
+
+The strongest is **gapErr**: fit the dot unit from *marks only* (D-2), then measure how far
+the *gaps* fall from the 1/3/7-unit lattice they should occupy. Marks and gaps sharing one
+unit is a property of Morse that nothing else has reason to satisfy, and nothing in the
+decoder currently checks the two against each other.
+
+| | gapErr | spread (p95/p5 of marks) | r2 (two-cluster residual) |
+|---|---|---|---|
+| synthetic Morse, 16 fixtures | 0.015 – 0.263 | 2.94 – 4.75 | 0.004 – 0.267 |
+| **real recording, hand-sent** | **0.384 – 0.452** | 3.67 – 3.71 | 0.084 – 0.112 |
+| speech, 4 seeds | 0.663 – 0.802 | 2.61 – 3.67 | 0.161 – 0.205 |
+| RTTY, 4 seeds | 0.291 – 0.313 | 5.50 – 6.63 | 0.311 – 0.334 |
+
+**The load-bearing row is the real recording.** Tuned on the synthetic rows alone, gapErr
+lands on a threshold near 0.40 — which **rejects genuine hand-sent Morse (0.45) and accepts
+RTTY (0.29)**, the precise inversion of what is wanted. Genuine hand-sent code is
+*further* off the lattice than a teleprinter is. This is G-1 stated as a concrete
+near-miss: synthetic fixtures alone would have produced a confidently wrong gate.
+
+With the real recording included, the statistics turn out to be complementary rather than
+redundant, and no single one suffices:
+
+- `gapErr > 0.60` catches speech, music, knocking and the mixes. It cannot catch RTTY.
+- `spread > 5.0` or `r2 > 0.29` catches RTTY. Neither can catch speech, which sits inside
+  the Morse range on both.
+
+Combined, that rejects **6 of 7** non-Morse fixtures while accepting **all 16** Morse
+fixtures *and* the real recording. `clipping` escapes.
+
+**Not implemented, deliberately.** The margins are 1.05–1.13× on a single real recording.
+A gate that wrong-foots one genuine transmission is worse than the defect it fixes, and
+one recording cannot establish where hand-sent Morse actually sits — the sample that
+mattered most is the sample we have exactly one of. This becomes shippable when G-1 does.
+
+The original hypothesis in `prior-art.md` — that occupancy at 2 units is forbidden and
+therefore diagnostic — is **refuted** and recorded there. Real fists run 2:1 to 2.5:1
+(decisions.md D-3), so legitimate dashes land squarely in the supposedly forbidden zone;
+measured, speech scores 0.19 on that statistic against 0.28–0.36 for a rough fist, i.e.
+*better* than genuine Morse.
+
 Two further holes in the same area, visible in the measurements:
 
 - **Emission begins before the fit window is ready.** `clipping` and `speech+hum` emitted
