@@ -15,7 +15,20 @@ Note on numbering: `decisions.md` and `known-issues.md` each have their own D-se
 they are **not** the same sequence. Decision records are written `decisions D-16`, defects
 `known-issues D-6`.
 
----
+---ts recovery", with the D-17 row completing the time series 69 % → 308 % → 207 % → 65.9 %. Finding 1 became "attributable to two commits" and the mean updated to 13.1 %.
+- prior-art.md — this one mattered more than it looks. Idea 1 (soft-decision front end) was argued on a worked example: "a marginal threshold decision becomes an element-boundary error becomes a 4× unit error." That chain
+  turned out to be shorter than claimed — the threshold did fragment one dash, but the 4× came from the seed accepting the fragment, not from the architecture. The example is withdrawn and the principle kept, with a note that
+  the idea needs a failure surviving contact with the cheap fixes before it becomes the largest change in the project. Idea 2's stale "reports 53 WPM" is now marked half-done, half-measured-wrong.
+- decisions.md — D-17 record: the diagnosis, why membership was rejected as the test, the measurements, and both consequences.
+- known-issues.md — D-6 downgraded from "catastrophically" to "badly" with the new numbers and history table; the answered "worth checking whether the two-means bootstrap..." line removed. D-1 gained the reproducer-lost
+  section.
+- progress.md — step 1 marked done with its measurements; new steps 1b (port the guard to the file path) and 4a (restore a D-1 reproducer); step 6 re-scoped; headline figures updated.
+- README.md — doc table rows for both new files.
+
+Not touched: CLAUDE.md, which still describes the repo as a specification handover with no code. known-issues.md lists that as deliberately the owner's call since rewriting it changes how agents work here.
+
+Two things worth carrying forward from this commit. The plan's largest item lost its main justification — that's a good outcome, but it means step 6 shouldn't start until someone measures where the remaining 65.9 %
+accumulates. And D-1, a High defect, now has nothing failing to hold it; the honest fix is a new reproducer, not a closed entr
 
 ## Where we are — 2026-08-03
 
@@ -55,7 +68,7 @@ Two commits (`4fd2154`, `dddb819`) are README and UI copy only and are omitted.
 | 7 | `8d571ed` | 07-31 | D-4/D-5 | 32.7 % |
 | 8 | `92fd11e` | 08-03 | FR-2.7 window | 32.6 % |
 | 9 | `9b52819` | 08-03 | clamp-suppress | **21.9 %** |
-| 10 | *uncommitted* | 08-03 | D-17 seed guard | **13.1 %** |
+| 10 | `7d1a2b5` | 08-03 | D-17 seed guard | **13.1 %** |
 
 ### 1 · `ad5479d` — init
 

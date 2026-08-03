@@ -461,9 +461,6 @@ owner's call.
 Recorded so they are not re-reported.
 
 - **FR-7.4 (assist master switch) is not implemented.** Deliberate, see D-12.
-- **`CLAUDE.md` still describes the repo as a specification handover with no code.** True
-  at the first commit, false since. Rewriting it changes how agents work in this repo, so
-  it is the owner's call.
 - **§8 of the requirements is still open** — export-with-audio, practice mode.
 - **First launch prompts for the microphone with no preamble.** A consequence of opening
   straight into listening; the rationale banner only appears after a denial.
