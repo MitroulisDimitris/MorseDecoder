@@ -506,10 +506,23 @@ class LiveEngineTest {
             assertTrue(reported == null || reported <= KalmanUnit.MAX_WPM) {
                 "seed $seed reported $reported WPM"
             }
-            if (engine.speedImplausible) ceilingHit = true
+
+            // Guard against a vacuous test: this fixture must still be capable of driving
+            // the estimate past the ceiling, which is what put 100+ WPM on the readout
+            // before the clamp existed.
+            //
+            // Measured with the seed-ratio guard *disabled*, because D-17 now rejects
+            // these bootstraps one step earlier — noise clusters at ratios no fist
+            // produces, so the seed is thrown out before a unit exists to clamp. The
+            // ceiling is therefore no longer reached on this fixture, and asserting that
+            // it is would only assert that D-17 had been reverted.
+            val unguarded = LiveDecoderEngine(
+                cfg = LiveDecoderEngine.Config(bootstrapMaxRatio = Double.MAX_VALUE),
+            )
+            feedInChunks(unguarded, ambientTone(seed, envStep = 0.08))
+            unguarded.finish()
+            if (unguarded.speedImplausible) ceilingHit = true
         }
-        // Guard against a vacuous test: this fixture must actually push past the ceiling,
-        // which is what put 100+ WPM on the readout before the clamp existed.
         assertTrue(ceilingHit) { "fixture no longer drives the estimate past the ceiling" }
     }
 

@@ -130,6 +130,13 @@ class LiveDecoderEngine(
         val relockFitThreshold: Double = 0.45,
         val relockScoreMargin: Double = 1.5,    // FR-2.10.3
         val bootstrapMinMarks: Int = 8,
+        /**
+         * Widest dash/dot ratio a bootstrap seed may claim before it is discarded as a
+         * split on glitch debris rather than on dots and dashes. See [initFromBootstrap];
+         * D-3 puts real fists at 2:1-2.5:1 against a 3:1 prior, so this is loose on
+         * purpose — its job is to catch splits no fist could produce, not to police them.
+         */
+        val bootstrapMaxRatio: Double = 4.5,
         val commitHorizonChars: Int = 2,        // NFR-2 Viterbi horizon
 
         // ---- Output gate (P-4 honest failure / FR-5.8) -------------------------------
@@ -658,6 +665,25 @@ class LiveDecoderEngine(
             }
             if (n1 > 0) c1 = s1 / n1
             if (n2 > 0) c2 = s2 / n2
+        }
+        // The split has to describe dots and dashes, and a ratio no real fist produces
+        // means it does not. `u0` is the *lower* cluster mean, so one glitch below the dots
+        // sets the entire timebase on its own: measured on `hand-13-rough`, a 25 ms
+        // fragment of a 130 ms dash formed the whole lower cluster by itself and seeded
+        // 48 WPM against a true 13, after which every dash read as a run of dots.
+        //
+        // Membership is deliberately not the test. A singleton lower cluster is normal on
+        // a dash-heavy sample — seven dashes and one dot is a legitimate seed at ~3:1 —
+        // so rejecting on cluster size alone would throw away good bootstraps. What marks
+        // this case out is the *distance*, not the count.
+        //
+        // The floor below already refuses splits under 1.8:1 as "no two clusters here";
+        // this is the same judgement at the other end. Rejecting costs one further
+        // bootstrap attempt and nothing else, because the marks keep arriving.
+        if (c2 - c1 > ln(cfg.bootstrapMaxRatio)) {
+            bootstrapTooFast = false   // not a speed claim; the split is simply not Morse
+            bootstrapRuns.clear()      // junk; keep listening
+            return
         }
         val u0 = kotlin.math.exp(c1)
         // A bootstrap implying a speed above the sanity ceiling is not a slow sender we

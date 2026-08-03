@@ -57,6 +57,25 @@ consequence D-8 does not record: **an octave-type unit error is invisible to eve
 quality signal in the system.** The output gate keys off `fitQuality`, so it cannot
 suppress this; the UI shows `fit 1.00`; nothing warns.
 
+**Its only reproducer is gone, and the gap is not.** D-17 removed the seed error that
+produced the 4× scale error, so no scenario in the synthetic matrix now exhibits one — the
+live path reports 21.5 WPM on `hand-13-rough` and plausible speeds everywhere else, and a
+probe over dash-heavy and dot-heavy openings could not construct a replacement. The
+`@KnownFailure("D-1")` test therefore passes and its annotation has been removed; it now
+guards D-17 instead.
+
+Nothing about the capability changed. What remains as evidence:
+
+- the real recording, which still reads 30.6 WPM against a true 17.7 on the live path —
+  uncommitted, so blocked on **G-1**;
+- `fitQuality` reporting **1.00 on decodes measured at 13–23 % CER** (dash-heavy and
+  dot-heavy openings, +10 dB, 13 and 20 WPM). Confidence is still uncorrelated with
+  correctness even where the unit is roughly right.
+
+A defect with no reproducer is one nobody will notice regressing. Restoring one — from the
+real corpus, or by injecting a known-wrong unit directly — should come before any further
+work that assumes scale errors are visible.
+
 Candidate directions, none yet chosen:
 
 - Cross-check the unit against gap structure. Gaps are excluded from *estimating* the
@@ -181,27 +200,54 @@ above 0.45 after a recovery.
 
 ---
 
-## D-6 — A rough fist at 13 WPM is decoded catastrophically · High
+## D-6 — A rough fist at 13 WPM is decoded badly · High
 
-`hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is the
-worst scenario in the bench by a wide margin, and it fails differently in each path:
+**Downgraded from catastrophic by D-17, not closed.** The cause is now measured rather
+than suspected: a single 25 ms fragment of a dash formed the entire lower cluster of the
+bootstrap seed and set the timebase 4× short. `decisions.md` D-17 has the diagnosis and the
+guard; the numbers below are the current state.
 
-- **file** — emits **nothing at all** (0 characters).
-- **live** — emits **145 characters against a 62-character reference**, at a reported
-  53 WPM when the truth is 13. CER 251 %. D-16 took this to 194 against 99 on the longer
-  fixture (CER 308 % → 207 %) — materially better, still broken.
+`hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is still
+the worst scenario in the bench, and still fails differently in each path:
 
-These are the two halves of the same problem. The unit estimate lands roughly 4× short, so
-every dash reads as a string of dots; the file path's `fitQuality < 0.12` guard then
-declines outright, while the live path sails past because its own scale error keeps the
-clusters looking clean (**D-1**).
+- **file** — emits **nothing at all** (0 characters). Unchanged by D-17, which is live-path
+  only; the `fitQuality < 0.12` guard still declines outright.
+- **live** — **65.9 % CER**, 99 characters against 99 sent, at a reported 21.5 WPM against a
+  true 13. The character count is now right and the timebase is out by 1.65× rather than 4×.
+
+| Commit | chars emitted (99 sent) | CER |
+|---|---|---|
+| `ad5479d` … `cb358e7` (pre-D-13) | 66 | 69 % |
+| `6c250a3` (D-13) … `92fd11e` | 274 | 308 % |
+| `9b52819` (D-16) | 194 | 207 % |
+| **D-17 seed guard** | **99** | **65.9 %** |
+
+Below the first commit at last, and the first change in the project to improve the worst
+case rather than the mean. What remains is ordinary inaccuracy rather than a broken
+timebase: two thirds of the characters are still wrong, which is a decode-quality problem
+on the hardest legitimate fixture, not a capability gap.
+
+The two paths still fail for different reasons, and the file path's is untouched: its
+`fitQuality < 0.12` guard declines the whole transmission, and `MorseDecoder.twoMeansSeed`
+has the same unguarded 2-means that D-17 fixed on the live side. Porting the guard there is
+the obvious next move and has not been done.
+
+**What the history says about D-13.** The pre-D-13 decoder under-emitted here (66 of 99).
+D-13 made it lock reliably, and a reliable lock on a signal whose unit estimate is 4×
+wrong produced a flood of wrong characters instead of a trickle — 274, a 4× regression that
+went unnoticed for three commits. D-16 recovered a third of it and D-17 removed the cause.
+The lesson stands independently of the fix: **better tone acquisition is worthless, and
+actively harmful, without a working unit estimate.**
 
 The impairment levels are aggressive but not unrealistic — this is what a beginner on a
 straight key in a noisy room looks like, which is squarely inside the intended use.
 
-Worth checking whether the two-means bootstrap in `MorseDecoder.twoMeansSeed` /
-`LiveDecoderEngine.initFromBootstrap` is seeding on a dot/dash split or on a
-jitter-induced split *within* the dot cluster.
+The remaining 65.9 % is no longer attributable to the bootstrap. Where it goes next is an
+open question the diagnostic can answer: `BootstrapDiagnostic` reports the seed is now
+sound, so the error is accumulating in tracking, segmentation under 25 % jitter, or the
+lattice. Worth measuring before assuming the soft-decision front end
+(`prior-art.md` idea 1) is the answer — that argument rested on the 4× error, which is
+gone.
 
 ---
 

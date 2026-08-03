@@ -56,12 +56,16 @@ class HonestFailureTest {
 
     /**
      * A rough fist is squarely inside the intended use — a beginner on a straight key in a
-     * noisy room is most of the target audience. Measured today: the live path emits 145
-     * characters against a 62-character reference at a reported 53 WPM when the truth is
-     * 13, and the file path emits nothing at all.
+     * noisy room is most of the target audience.
+     *
+     * Was 145 characters against a 62-character reference at a reported 53 WPM against a
+     * true 13. D-17's seed guard took the live path to 65.9 % CER at 21.5 WPM, emitting 99
+     * characters against 99 sent — the character *count* is now right and the timebase is
+     * within 1.65x rather than 4x. Still far short of the 50 % this asserts, and the file
+     * path still declines outright, so the defect stays open.
      */
     @Test
-    @KnownFailure("D-6", "a rough 13 WPM fist decodes at 250 % CER")
+    @KnownFailure("D-6", "a rough 13 WPM fist decodes at 66 % CER")
     fun `a rough hand-sent fist at 13 WPM decodes usefully`() {
         val gen = roughFist()
         val engine = LiveDecoderEngine()
@@ -76,11 +80,19 @@ class HonestFailureTest {
     /**
      * The speed estimate is the decoder's own claim about what it is hearing. When it is
      * out by a factor of four, every character derived from it is wrong, and something has
-     * to notice. Measured today: 53 WPM reported for a 13 WPM signal, `outputSuppressed`
-     * false throughout.
+     * to notice. This read 53 WPM for a 13 WPM signal with `outputSuppressed` false
+     * throughout, and was a `@KnownFailure("D-1")` on that basis.
+     *
+     * It passes since D-17, but **it did not start passing because anything noticed** — it
+     * passes because the 4x error no longer occurs on this fixture. The reported speed is
+     * now 21.5 WPM, inside the plausible band the assertion checks. Kept as a normal
+     * regression test of D-17's seed guard, which is what it now measures.
+     *
+     * D-1 itself is not fixed and is not closed. Nothing in the system can still see a
+     * scale error; what changed is that the synthetic matrix no longer produces one to
+     * see. See `known-issues.md` D-1 for the evidence that remains.
      */
     @Test
-    @KnownFailure("D-1", "a 4x unit-scale error is not detected")
     fun `a wildly wrong speed estimate suppresses output`() {
         val gen = roughFist()
         val engine = LiveDecoderEngine()

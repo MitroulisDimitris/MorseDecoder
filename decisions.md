@@ -418,3 +418,71 @@ Bench mean 29.0 % → 17.9 %. Closes D-7 and improves D-6 without closing it.
 
 A genuine 45 WPM sender is unaffected — decoded, flagged out of range, not suppressed —
 which is the FR-5.7 behaviour the broad version would have destroyed.
+
+---
+
+## D-17 — A bootstrap seed claiming an impossible ratio is discarded
+
+The live path fixes its timebase once, from the first eight marks, by 2-means over the log
+durations: lower cluster is dots, upper is dashes, and `u0` — the unit everything else is
+measured in — is the lower cluster mean. `BootstrapDiagnostic` measured what that produced
+on `hand-13-rough`, and the failure is not the one D-6 guessed at.
+
+Seven of the eight marks were segmented near-perfectly (≥ 0.98 coverage against the
+generator's own element list). The eighth was a **25 ms fragment of a 130 ms dash**, 0.19
+coverage — noise had split the dash and one piece survived. 2-means put that fragment in
+the lower cluster *by itself* and all seven genuine marks, dots and dashes together, in the
+upper. `u0` became 25 ms against a true 92.3: **48 WPM believed, 13 WPM sent**, after which
+every dash read as a run of dots.
+
+Nothing else was at fault. Segmentation was good (210 mark runs against 214 true marks).
+The algorithm was good — fed the true durations of those same eight elements it returns
+105.8 ms and 2.08:1, near-correct. One outlier, and no defence against it.
+
+### Why not reject on cluster size
+
+The obvious guard is "a cluster with one member is not a cluster". It is wrong. A singleton
+lower cluster is **normal** on a dash-heavy sample: seven dashes and one dot is a
+legitimate opening and seeds correctly at ~3:1. Rejecting on membership would discard good
+bootstraps for the same shape that makes bad ones.
+
+What distinguishes this case is the *distance*, not the count. The split claims **5.55:1**.
+D-3 puts real fists at 2:1–2.5:1 against a 3:1 prior, and `initFromBootstrap` already
+refuses splits below 1.8:1 as "no two clusters here". This is that judgement at the other
+end: above `bootstrapMaxRatio` (4.5:1) the split is not describing dots and dashes.
+
+Rejection reuses the existing discard path — clear and keep listening. It costs one further
+bootstrap attempt, because the marks keep arriving.
+
+### Measured
+
+`HistoryBench`, the same probe every row of `version-history.md` was produced with. **One
+of 42 rows changed:**
+
+| | before | after |
+|---|---|---|
+| `hand-13-rough`, live | 194 chars, **207.1 %** | 99 chars, **65.9 %** |
+| Live mean, 16 scenarios | 21.9 % | **13.1 %** |
+| Live worst case | 207.1 % | **65.9 %** |
+| File mean | 15.6 % | 15.6 % (unchanged) |
+
+Every other Morse scenario and all five non-Morse fixtures are byte-identical. The
+scenario emits 99 characters against 99 sent — the count is now right — and reports 21.5
+WPM against a true 13, so the timebase is out by 1.65× rather than 4×.
+
+This is the first change to improve the worst case rather than the mean. It also puts the
+scenario below its first-commit value (69 %) for the first time; D-13's regression is
+recovered.
+
+### Two consequences worth stating
+
+**A vacuity guard in `LiveEngineTest` had to be re-pointed.** Ambient noise clusters at
+ratios no fist produces, so those bootstraps are now discarded before a unit exists to
+clamp, and the 60 WPM ceiling is no longer reached on that fixture. The guard now measures
+reachability with `bootstrapMaxRatio` disabled; asserting it on the default config would
+only assert that this record had been reverted. Noise still decodes to nothing.
+
+**D-1's known-failure test now passes, and D-1 is not fixed.** It passes because the 4×
+error no longer occurs on the only fixture that produced one, not because anything
+detected it. The annotation is removed so the test guards this change, and D-1 stays open
+with no synthetic reproducer — see `known-issues.md`.

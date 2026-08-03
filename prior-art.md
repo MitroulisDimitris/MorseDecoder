@@ -81,9 +81,20 @@ Shovkoplyas' stated principle, from 8 years on the problem:
 We violate this in one specific, identifiable place: the **Schmitt trigger** binarises the
 envelope into key-up/key-down before anything downstream sees it (`FrontEnd.process`,
 `LiveDecoderEngine.processFrame`). Every later stage — mixtures, Kalman, Viterbi — inherits
-whatever that threshold decided, with no way to revisit it. On a rough fist at +5 dB, a
-marginal threshold decision becomes an element-boundary error becomes a 4× unit error, and
-D-1 means nothing downstream can notice.
+whatever that threshold decided, with no way to revisit it.
+
+**The example this argument was built on has since been withdrawn.** It was: on a rough
+fist at +5 dB a marginal threshold decision becomes an element-boundary error becomes a 4×
+unit error, which D-1 means nothing downstream can notice. Measurement (`decisions.md`
+D-17) found the chain was shorter than that. The threshold *did* fragment one dash, but the
+4× error came from the bootstrap seed accepting that single fragment as its entire dot
+cluster — a bounds check, not an architecture. With the check in place the same audio
+decodes at 65.9 % instead of 207 %, and the fragmentation the front end produces is
+otherwise benign (210 mark runs against 214 true marks).
+
+The principle stands and the citation does not. Before this becomes the largest change in
+the project, it needs a failure that survives contact with the cheap fixes — measure where
+the remaining 65.9 % accumulates first.
 
 Our lattice is already Bayesian in shape; the front end is not. Feeding *soft* key-state
 probabilities into the lattice instead of hard runs is the single most architecturally
@@ -102,13 +113,17 @@ Others impose hard speed limits as a decoding constraint:
 
 We have a 5–40 calibrated band and a 60 WPM clamp on `KalmanUnit`, but D-4 means the
 out-of-range *flag* is computed from a different variable than the *displayed* speed, so
-the constraint never surfaces. Our worst failure, `hand-13-rough`, reports **53 WPM for a
+the constraint never surfaces. Our worst failure, `hand-13-rough`, reported **53 WPM for a
 13 WPM signal** — a value every tool listed above would reject outright as outside its
 operating range.
 
-This is the cheapest available win. Fixing D-4 and treating "speed outside the band" as a
-suppression condition rather than a cosmetic banner would kill the visible symptom of D-1
-and D-6 without any new theory.
+**Half done, and the other half was measured to be wrong.** D-4 is fixed. Treating "speed
+outside the band" as a suppression condition is not implementable: speed carries no
+information about correctness in the region that matters — synthetic 50 WPM decodes at 0 %
+CER while RTTY at 52.9 WPM is garbage, and this very scenario read 16.3 WPM, *inside* the
+band. What shipped instead is narrower and survives: suppress only while the estimate is
+pinned at the physical clamp (`decisions.md` D-16). The scenario now reports 21.5 WPM,
+so the symptom this idea aimed at is gone — removed by D-17 rather than by a speed rule.
 
 ### 3. Implement FR-2.7's speed-adaptive window — which we never did · DONE (D-15)
 

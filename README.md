@@ -165,6 +165,8 @@ actually send: **real hand-sent recordings remain the gap in the test corpus.**
 | `decisions.md` | Why the non-obvious choices are what they are |
 | `known-issues.md` | Open defects and gaps, with the evidence behind each |
 | `prior-art.md` | How other Morse decoders solve this, and what we should borrow |
+| `version-history.md` | Every commit benchmarked with one ruler — is the decoder improving? |
+| `progress.md` | What each commit bought, what is still broken, and the plan from here |
 | `export-formats.md` | `.txt` and `.json` schemas |
 | `ui-spec.md` | Screen layout and annotation vocabulary |
 | `main-screen.html` | Visual reference; open in a browser |
