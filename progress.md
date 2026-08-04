@@ -348,25 +348,41 @@ dot/dash boundary **nor** the interior of the dot cluster, but on a single outli
 ### N-2 — The decode depends on the caller's buffer size
 
 Found while validating N-1. Same audio, same build, same config; only the length of the
-slices handed to `feed()` changes:
+slices handed to `feed()` changes. On `hand-13-rough`, re-measured 2026-08-04 with
+`BootstrapDiagnostic`:
 
 | chunk | chars | CER | seeded unit | reported WPM |
 |---|---|---|---|---|
 | 512 | 33 | 70.9 % | 80.9 ms | 23.0 |
 | 1024 | 36 | 70.9 % | 108.1 ms | 21.8 |
-| 2048 | 76 | 117.7 % | 30.2 ms | 19.8 |
-| **4096** | **87** | **138.0 %** | 23.9 ms | 53.2 |
-| 8192 | 87 | 138.0 % | 23.9 ms | 53.2 |
+| 2048 | 48 | 74.7 % | 64.4 ms | 19.1 |
+| **4096** | **64** | **89.9 %** | 64.4 ms | 21.5 |
+| 8192 | 61 | 86.1 % | 64.4 ms | 23.5 |
 
-`clean-20` moves too, 2.5 % → 6.3 % at 2048. Cause: while unlocked, `feed` resets the
-analysis frame grid to the chunk boundary (`LiveDecoderEngine.kt:364`), and the sweep loop
-is evaluated off `nowMs()` only once the whole chunk has landed — so both the framing phase
-and the acquisition instant are functions of the caller's buffer size.
+**These numbers are a third of what this entry originally recorded, and the difference is
+D-17.** As first measured — before the seed guard landed — the same sweep read 117.7 % at
+2048 and **138.0 % at 4096 and 8192**, a 67-point spread, with the seeded unit collapsing to
+23.9 ms (53.2 WPM believed, 13 WPM sent) on the three largest chunks. Those were degenerate
+bootstraps, and D-17 now rejects them: the seed reads a consistent 64.4 ms from 2048 up, and
+the spread is **19 points rather than 67**.
 
-Two consequences. `DecoderBench` feeds 4096 and therefore reports this scenario's worst
-column; at 512 the error is half. And `AudioRecord` chooses its buffer size from device
-hardware — G-2 lists buffer sizing as unexercised, and this says it is not a performance
-detail but something that changes the transcript.
+So the entry was overstating the defect by ~3.5× for two commits, in the same way step 1b's
+premise was wrong for two commits — **a defect written up once and not re-measured after the
+code beneath it changed.** Both were caught by re-running the instrument rather than
+re-reading the file.
+
+**The mechanism is untouched, and that is the point.** The seeded unit still varies with
+chunk size on every fixture — `clean-20` reads 53.3 / 67.6 / 57.5 / 60.0 / 60.0 ms across
+the sweep and still moves 2.5 % ↔ 6.3 % at 2048; `hand-18` spans 74.3–91.6 ms and 8.9–13.9 %.
+While unlocked, `feed` resets the analysis frame grid to the chunk boundary
+(`LiveDecoderEngine.kt:364`), and the sweep loop is evaluated off `nowMs()` only once the
+whole chunk has landed — so both the framing phase and the acquisition instant remain
+functions of the caller's buffer size. D-17 removed the worst *consequence*, not the cause.
+
+Two consequences still stand. `DecoderBench` feeds 4096 and therefore reports this
+scenario's worst column; at 512 the error is a third lower. And `AudioRecord` chooses its
+buffer size from device hardware — G-2 lists buffer sizing as unexercised, and this says it
+is not a performance detail but something that changes the transcript.
 
 ### N-3 — The file path declined a fit it could decode · FIXED by D-18
 
@@ -431,7 +447,7 @@ collected at the foot of this file.
 |---|---|---|---|---|---|
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
-| 2 | Decouple the decode from buffer size | ready | small | No CER improvement expected at all. Removes a ±35-point spread that is currently an artefact of the harness, so every later number means something. `clean-20` should stop moving 2.5 % ↔ 6.3 % with chunk size | measured (N-2 table) |
+| 2 | Decouple the decode from buffer size | ready | small | No CER improvement expected at all. Removes a **19-point** spread on `hand-13-rough` that is an artefact of the harness, so later live-path comparisons mean something. `clean-20` should stop moving 2.5 % ↔ 6.3 % with chunk size, and the seeded unit stop varying 53–68 ms. **Weaker than it looks:** D-17 already took this from 67 points to 19 without touching the cause | measured (N-2, re-run 08-04) |
 | 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
 | 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
@@ -468,8 +484,11 @@ Everything else byte-identical, non-Morse fixtures included. **The first change 
 project to improve the worst case rather than the mean**, and the scenario is finally below
 its first-commit value of 69 %, so D-13's regression is recovered.
 
-Two follow-ups it created, both listed below: the file path has the same unguarded 2-means
-and did not benefit (step 1b), and D-1 lost its only reproducer (step 4a).
+Three follow-ups, all listed below. D-1 lost its only reproducer (step 4a). The file path
+did not benefit, which was written up at the time as "it has the same unguarded 2-means" —
+**that turned out to be wrong**, and step 1b records what was actually happening. And it
+quietly shrank N-2 from a 67-point spread to 19 by removing the degenerate seeds that
+produced the worst chunk sizes, which was not noticed until N-2 was re-run on 08-04.
 
 ### Step 1b — Port the seed guard to the file path · **DONE, and the premise was wrong** · `decisions.md` D-18
 
