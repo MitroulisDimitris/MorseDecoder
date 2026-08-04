@@ -131,6 +131,39 @@ class HonestFailureTest {
     }
 
     /**
+     * The file path's honest-failure gate, from both sides at once.
+     *
+     * It used to decline anything scoring under `fitQuality` 0.12, which sounds
+     * conservative and measured as the opposite: a rough but genuine 13 WPM fist scores
+     * 0.0987 and was thrown away whole, while speech (0.4741), knocking (0.4033) and a
+     * clipping input stage (0.7386) all scored higher and were decoded. There is no cut
+     * point that separates those populations — see `known-issues.md` D-8 — so the gate now
+     * claims only what it can prove: a fit that is *structurally* impossible.
+     *
+     * Both halves are asserted together deliberately. Relaxing the gate is only defensible
+     * if it does not also open the door to the fixtures it was correctly rejecting, and
+     * those score a hard zero rather than a small number, which is why the door stays shut.
+     */
+    @Test
+    fun `the file gate declines impossible fits and not merely poor ones`() {
+        val gen = roughFist()
+        val rough = MorseDecoder().decodeFile(FloatArrayPcmSource(gen.samples, gen.sampleRate))
+        assertTrue(rough.chars.isNotEmpty()) {
+            "declined a rough fist that fits at ${"%.1f".format(rough.unitMs)} ms " +
+                "(fit ${"%.4f".format(rough.modelFitQuality)})"
+        }
+
+        // The rejections the gate exists for, all of them hard zeros.
+        val corpus = com.morsedecoder.core.fixtures.NonMorseAudio.corpus().toMap()
+        for (name in listOf("music", "speech+hum", "music+noise")) {
+            val r = MorseDecoder().decodeFile(
+                FloatArrayPcmSource(corpus.getValue(name), com.morsedecoder.core.fixtures.NonMorseAudio.SAMPLE_RATE)
+            )
+            assertTrue(r.chars.isEmpty()) { "$name decoded ${r.chars.size} characters" }
+        }
+    }
+
+    /**
      * FR-5.7's out-of-range flag must describe the speed the user is shown. It used to be
      * derived from `u0`, the pass-1 bootstrap, while the UI displays the pass-2 Kalman
      * speed — which is how the field recording came to show 58.9 WPM with no

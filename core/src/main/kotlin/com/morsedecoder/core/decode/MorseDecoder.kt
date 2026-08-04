@@ -67,7 +67,31 @@ class MorseDecoder(
         // Honest-failure gate (P-4): if the two-cluster model cannot describe the
         // measured marks at all, this is not decodable keying. The live path grows a
         // full low-signal state (FR-3.7) in M3; file mode simply declines.
-        if (RobustTimingDecoder.fitQuality(markMix) < 0.12) return empty(fe.toneHz)
+        //
+        // "At all" is meant literally, and the threshold used to be 0.12. Measured across
+        // the bench matrix and the whole non-Morse corpus, `fitQuality` ranks a rough but
+        // genuine fist *below* every impostor it lets through:
+        //
+        //     hand-13-rough  0.0987  declined      speech    0.4741  decoded, 31 chars
+        //     music          0.0000  declined      knocking  0.4033  decoded, 30 chars
+        //     speech+hum     0.0000  declined      clipping  0.7386  decoded, 19 chars
+        //     music+noise    0.0000  declined      RTTY      0.5228  (stopped elsewhere)
+        //
+        // So no threshold separates the two populations — the ordering is wrong, not the
+        // cut point, and 0.12 was picking the one genuine transmission out of the set.
+        // Every correct rejection is a *hard* zero: music and music+noise fail on ratio
+        // (7.0-7.3:1, past fitQuality's 5.5 ceiling), speech+hum on separation (1.29,
+        // under its 1.5 floor). Those are structural impossibilities, not close calls,
+        // and they are all this gate can honestly claim to detect.
+        //
+        // The margin between 0 and 0.12 was therefore doing nothing except rejecting
+        // `hand-13-rough`, which fits at u0 89.2 ms against a true 92.3 (1.04x) and
+        // decodes at 64.6 % CER — poor, and the business of known-issues D-6, but a
+        // decode. Seeding is not the lever: fed the true unit it still scores 0.1071.
+        //
+        // The score survives on `modelFitQuality` for the UI to annotate, which is where
+        // a weak-but-possible fit belongs. It is not evidence for a veto.
+        if (RobustTimingDecoder.fitQuality(markMix) <= 0.0) return empty(fe.toneHz)
 
         val zGaps = runs.asSequence()
             .filter { !it.isMark }

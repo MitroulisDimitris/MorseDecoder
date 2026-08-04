@@ -210,10 +210,13 @@ guard; the numbers below are the current state.
 `hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is still
 the worst scenario in the bench, and still fails differently in each path:
 
-- **file** — emits **nothing at all** (0 characters). Unchanged by D-17, which is live-path
-  only; the `fitQuality < 0.12` guard still declines outright.
+- **file** — **64.6 % CER**, 79 characters, at a reported 17.9 WPM against a true 13. It
+  used to emit nothing at all; `decisions.md` D-18 retired the `fitQuality < 0.12` veto that
+  was declining it. Measured with `DecoderBench`.
 - **live** — **65.9 % CER**, 99 characters against 99 sent, at a reported 21.5 WPM against a
   true 13. The character count is now right and the timebase is out by 1.65× rather than 4×.
+  Measured with `HistoryBench`; `DecoderBench`'s shorter text puts the same scenario at
+  89.9 %.
 
 | Commit | chars emitted (99 sent) | CER |
 |---|---|---|
@@ -222,15 +225,24 @@ the worst scenario in the bench, and still fails differently in each path:
 | `9b52819` (D-16) | 194 | 207 % |
 | **D-17 seed guard** | **99** | **65.9 %** |
 
+Live path only — D-18 did not touch it, and `HistoryBench` reports all 42 rows unchanged.
+
 Below the first commit at last, and the first change in the project to improve the worst
 case rather than the mean. What remains is ordinary inaccuracy rather than a broken
 timebase: two thirds of the characters are still wrong, which is a decode-quality problem
 on the hardest legitimate fixture, not a capability gap.
 
-The two paths still fail for different reasons, and the file path's is untouched: its
-`fitQuality < 0.12` guard declines the whole transmission, and `MorseDecoder.twoMeansSeed`
-has the same unguarded 2-means that D-17 fixed on the live side. Porting the guard there is
-the obvious next move and has not been done.
+The two paths still fail for different reasons. **The file path's reason was diagnosed and
+removed in `decisions.md` D-18, and it was not the one stated here for two commits.**
+Porting D-17's seed guard — the "obvious next move" this entry used to recommend — is a
+measured no-op: `decodeFile` clusters all 214 marks rather than the first eight, so it
+splits at 2.19:1 with `u0` within 1.04× of truth. The seed was never the problem. What
+declined the transmission was the `fitQuality < 0.12` veto, on a score that ranks this fist
+(0.0987) below speech (0.4741), knocking (0.4033) and clipping (0.7386), all of which it
+decoded. Reproduce with `DIAG=1 gradlew :core:test --tests "*FileGateDiagnostic*" -i`.
+
+What remains on the file path is decode quality, not a veto: 64.6 % CER on a fit whose unit
+is right to 4 %.
 
 **What the history says about D-13.** The pre-D-13 decoder under-emitted here (66 of 99).
 D-13 made it lock reliably, and a reliable lock on a signal whose unit estimate is 4×
@@ -304,6 +316,14 @@ argued.** Over the same fixtures, `modelFitQuality` scores:
 RTTY's distribution sits *entirely inside* the legitimate one. No threshold admits real
 hand-sent Morse and rejects RTTY. `NonMorseTest` pins this as an explicit negative
 assertion so nobody concludes the gate merely needs a better number.
+
+**The file path had shipped that better number since the first commit, and it was inverted.**
+`FileGateDiagnostic` scores the whole corpus through `decodeFile`'s pass 1, and a rough but
+genuine fist (0.0987) ranks *below* speech (0.4741), knocking (0.4033), clipping (0.7386)
+and RTTY (0.5228) — so the `fitQuality < 0.12` veto declined the one real transmission and
+passed four impostors. `decisions.md` D-18 retired it in favour of the only claim the score
+supports, a structurally impossible fit. That does **not** close D-8: the impostors above
+were never being caught by that gate, and are not caught now.
 
 Why RTTY is so convincing: runs of *k* identical bits produce marks of *k* × 22 ms, so the
 durations really are multi-modal and a two-cluster fit lands near 3:1 — the exact structure

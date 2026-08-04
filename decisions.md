@@ -486,3 +486,103 @@ only assert that this record had been reverted. Noise still decodes to nothing.
 error no longer occurs on the only fixture that produced one, not because anything
 detected it. The annotation is removed so the test guards this change, and D-1 stays open
 with no synthetic reproducer — see `known-issues.md`.
+
+---
+
+## D-18 — The file path's honest-failure gate claims only what it can prove
+
+Step 1b of the plan was to port D-17's seed guard to `MorseDecoder.twoMeansSeed`, on the
+stated grounds that the file path "has the same unguarded 2-means" and therefore fails on
+`hand-13-rough` for the same reason the live path did. Measured with the new
+`FileGateDiagnostic`, that premise is wrong on every count, and the real cause is a
+different guard entirely.
+
+### Step 1b was a no-op, and the reason is structural
+
+The file path's 2-means is not exposed to D-17's failure. D-17's outlier could dominate
+because the live seed clusters the **first eight marks**, so one 25 ms fragment can form a
+cluster by itself. `decodeFile` clusters **every mark in the recording** — 214 of them on
+this fixture — where a single fragment cannot move a centroid appreciably. The split lands
+at 2.19:1 with `u0` = 89.2 ms against a true 92.3, an error of **1.04×**.
+
+Applying `bootstrapMaxRatio` = 4.5 to the file seed changes **nothing on any fixture**,
+Morse or non-Morse. The only fixtures whose seed exceeds 4.5:1 are `music` (11.16) and
+`music+noise` (11.26), and rejecting their seed in favour of the weak 3:1 fallback lands
+EM in the same place: both still score `fitQuality` 0.0000 and are still declined. The
+diagnostic keeps that table so the port is not proposed a third time.
+
+### What actually declined it
+
+`fitQuality < 0.12`. The fit scored **0.0987** — and this is not a seeding problem, because
+fed the true unit it still scores 0.1071. No improvement to the seed could have rescued it.
+
+The threshold was picking out the one genuine transmission in the corpus. Ranked by
+`fitQuality`, a rough but real fist sits **below every impostor the gate lets through**:
+
+| | fitQuality | outcome under the 0.12 gate |
+|---|---|---|
+| `hand-13-rough` — a real 13 WPM fist | **0.0987** | **declined** |
+| `speech` | 0.4741 | decoded, 31 chars |
+| `knocking` | 0.4033 | decoded, 30 chars |
+| `clipping` | 0.7386 | decoded, 19 chars |
+| `rtty` | 0.5228 | stopped by `atSpeedCeiling`, not by this |
+| `music`, `music+noise` | 0.0000 | declined |
+| `speech+hum` | 0.0000 | declined |
+
+This is `known-issues` D-8 restated from the file side: the two populations are not
+separated by this score, so no cut point works. The ordering is wrong, not the number.
+
+### The evidence that retired the threshold
+
+The same fist, the same seed, the same impairments, at three transmission lengths:
+
+| text | marks | `u0` | `fitQuality` | under the 0.12 gate |
+|---|---|---|---|---|
+| 40 chars | 103 | 88.2 ms | 0.3258 | decoded |
+| 79 chars | 214 | 89.2 ms | **0.0987** | **declined** |
+| 126 chars | 329 | 86.8 ms | 0.3312 | decoded |
+
+`u0` holds within 4 % of truth throughout while the score swings by 3.3× and crosses the
+veto in the middle — not monotonically, so this is not "more data, better fit". At these
+levels `fitQuality` is sampling noise. Vetoing a whole transmission on it made the outcome
+a coin flip on identical signal quality, which is also why `version-history.md` and
+`DecoderBench` disagreed about whether this scenario decodes at all: the two use the same
+impairments over different text lengths, and landed on opposite sides of the threshold.
+
+### The decision
+
+The gate now declines only a **structurally impossible** fit — `fitQuality <= 0`. Every
+correct rejection in the corpus is a hard zero, not a small number: `music` and
+`music+noise` fail on ratio (7.0–7.3:1, past the score's 5.5 ceiling), `speech+hum` on
+separation (1.29, under its 1.5 floor). Those are the claims this score can support.
+
+This is deliberately **not** a re-tuned threshold. Fitting a number to these fixtures is
+the trap CLAUDE.md names, and the length table above is what a fitted number looks like
+when it fails. The change is to stop the score vetoing where it carries no information; it
+still reaches the UI as `modelFitQuality`, which is where a weak-but-possible fit belongs —
+annotate, do not withhold.
+
+### Measured
+
+`DecoderBench`, before and after. **One scenario changed, in all four file variants:**
+
+| | before | after |
+|---|---|---|
+| `hand-13-rough`, file | 0 chars, **100 %** | 79 chars, **64.6 %** at 17.9 WPM |
+| File mean, 16 scenarios | 13.8 % | **11.6 %** |
+| Live path, every column | — | byte-identical |
+
+Every other row is byte-identical, non-Morse fixtures included. `HistoryBench` is unchanged
+on all 42 rows, because its `hand-13-rough` uses the 126-char text and was on the decoding
+side of the threshold already — the disagreement above, seen from the other end.
+
+The full suite stays green with the same nine known failures. `known-issues` D-6 stays
+open: 64.6 % is two thirds wrong, and the live path is untouched at 89.9 %.
+
+### What this did not fix
+
+`qsb-impulse` still emits nothing from a file, and the diagnostic shows it is a different
+guard: pass 1 fits it perfectly (`fitQuality` 1.0000, `u0` 61.8 ms against a true 66.7) and
+`atSpeedCeiling` discards the result at the end of pass 2. That guard is **right** here —
+ungated the scenario emits 121 characters against 62 sent at 168.4 % CER, exactly the
+confident verbosity D-16 exists to stop. Recorded so it is not mistaken for the same defect.

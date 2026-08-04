@@ -23,10 +23,17 @@ Regenerate with the procedure at the bottom.
 | 5 | `8d571ed` | D-4/D-5 | Out-of-range flag from reported speed; nullable fit |
 | 6 | `92fd11e` | FR-2.7 win | Speed-adaptive analysis window (D-15) |
 | 7 | `9b52819` | clamp-suppress | Suppress output at the speed clamp (D-16) |
-| 8 | *(this commit)* | seed-guard | Discard a bootstrap seed claiming an impossible ratio (D-17) |
+| 8 | `7d1a2b5` | seed-guard | Discard a bootstrap seed claiming an impossible ratio (D-17) |
+| 9 | *(this commit)* | file-gate | Retire the file path's `fitQuality < 0.12` veto (D-18) |
 
-Commits 4–7 are this session's work. Two intermediate commits (`dddb819`, `4fd2154`) are
-README-only and were skipped.
+This table numbers only the commits that changed decoder behaviour, so its numbering is its
+own — `progress.md` numbers all thirteen. Skipped here: `dddb819` and `4fd2154`
+(README/UI copy), `bddb514` and `65c1f56` (tests and instruments), `953baf5` (docs).
+
+**`HistoryBench` reports commit 9 identical to commit 8 on all 42 rows.** That is a real
+result, not an omission: this file's `hand-13-rough` uses the 126-char text, and the veto
+D-18 removed only ever fired on shorter transmissions of the same signal — see
+`decisions.md` D-18's length table, and the caveat below.
 
 ---
 
@@ -56,36 +63,57 @@ Lower is better. Above 100 % means the decoder emitted more characters than were
 
 ## File path — Morse CER %
 
-| scenario | init | … | **D-13** | … | clamp | seed-guard |
-|---|---|---|---|---|---|---|
-| tone-1882 | 100.0 | 100.0 | **0.0** | 0.0 | 0.0 | 0.0 |
-| hand-13-rough | 57.1 | 57.1 | 57.1 | 57.1 | 57.1 | 57.1 |
-| qsb-impulse | 150.8 | 150.8 | 150.8 | 150.8 | 150.8 | 150.8 |
-| hand-18 / hesitation | 19.1 | 19.1 | 19.1 | 19.1 | 19.1 | 19.1 |
-| m20@-5 | 3.2 | 3.2 | 3.2 | 3.2 | 3.2 | 3.2 |
-| *(9 others)* | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| **MEAN** | **21.8** | 21.8 | **15.6** | 15.6 | 15.6 | 15.6 |
+| scenario | init | … | **D-13** | … | clamp | seed-guard | file-gate |
+|---|---|---|---|---|---|---|---|
+| tone-1882 | 100.0 | 100.0 | **0.0** | 0.0 | 0.0 | 0.0 | 0.0 |
+| hand-13-rough | 57.1 | 57.1 | 57.1 | 57.1 | 57.1 | 57.1 | 57.1 |
+| qsb-impulse | 150.8 | 150.8 | 150.8 | 150.8 | 150.8 | 150.8 | 150.8 |
+| hand-18 / hesitation | 19.1 | 19.1 | 19.1 | 19.1 | 19.1 | 19.1 | 19.1 |
+| m20@-5 | 3.2 | 3.2 | 3.2 | 3.2 | 3.2 | 3.2 | 3.2 |
+| *(9 others)* | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| **MEAN** | **21.8** | 21.8 | **15.6** | 15.6 | 15.6 | 15.6 | 15.6 |
 
 The file path has changed **once** in the project's history — D-13's band widening, which
 fixed `tone-1882`. Everything else has been flat since the first commit, `hand-13-rough`
-and `qsb-impulse` included. D-17 did not change it either: the seed guard is live-path
-only, and `MorseDecoder.twoMeansSeed` still has the unguarded 2-means it fixes.
+and `qsb-impulse` included. D-17 did not change it: the seed guard is live-path only.
+
+**D-18 does not move a row here either, and that needs saying carefully.** It removed a
+veto that fires on the file path's `hand-13-rough` — but on *`DecoderBench`'s* version of
+that scenario, which is the same generator config over the 79-char text rather than this
+file's 126-char one. Under the retired threshold the two landed on opposite sides:
+
+| text | `fitQuality` | old gate | this file |
+|---|---|---|---|
+| 79 chars (`DecoderBench`) | 0.0987 | **declined**, 0 chars | not measured here |
+| 126 chars (`HistoryBench`) | 0.3312 | decoded, 120 chars | the 57.1 % above |
+
+So this file's 57.1 % was always the *ungated* number, and `DecoderBench` reported 100 % on
+the same signal. Both were right about their own fixture. `DecoderBench` records the change
+as 100 % → 64.6 %, file mean 13.8 % → 11.6 %.
+
+**The lesson is about this file's premise, not about D-18.** One ruler protects against a
+bench that changes over time; it does not protect against *two* benches disagreeing at one
+moment, which is what happened here and went unnoticed. When the two
+disagree on a scenario name, they are measuring different audio.
 
 ## Non-Morse — characters emitted (0 is correct)
 
-| fixture | init | gate+cap | thr+launch | D-13 | … | clamp | seed-guard |
-|---|---|---|---|---|---|---|---|
-| **live** | | | | | | | |
-| ambient-tone | 311 | **14** | 14 | **0** | 0 | 0 | 0 |
-| knocking | 8 | **0** | 0 | 0 | 0 | 0 | 0 |
-| rtty | 112 | 99 | 99 | 70 | 70 | 69 | 69 |
-| speech | 29 | 29 | 29 | 26 | 26 | 26 | 26 |
-| steady-carrier | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| **file** | | | | | | | |
-| ambient-tone | 211 | **171** | 171 | 171 | 171 | 171 | 171 |
-| rtty | 125 | 124 | 124 | 124 | 124 | **0** | 0 |
-| knocking | 30 | 30 | 30 | 30 | 30 | 30 | 30 |
-| speech | 31 | 31 | 31 | 31 | 31 | 31 | 31 |
+| fixture | init | gate+cap | thr+launch | D-13 | … | clamp | seed-guard | file-gate |
+|---|---|---|---|---|---|---|---|---|
+| **live** | | | | | | | | |
+| ambient-tone | 311 | **14** | 14 | **0** | 0 | 0 | 0 | 0 |
+| knocking | 8 | **0** | 0 | 0 | 0 | 0 | 0 | 0 |
+| rtty | 112 | 99 | 99 | 70 | 70 | 69 | 69 | 69 |
+| speech | 29 | 29 | 29 | 26 | 26 | 26 | 26 | 26 |
+| steady-carrier | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **file** | | | | | | | | |
+| ambient-tone | 211 | **171** | 171 | 171 | 171 | 171 | 171 | 171 |
+| rtty | 125 | 124 | 124 | 124 | 124 | **0** | 0 | 0 |
+| knocking | 30 | 30 | 30 | 30 | 30 | 30 | 30 | 30 |
+| speech | 31 | 31 | 31 | 31 | 31 | 31 | 31 | 31 |
+
+D-18 relaxed a file-path veto and no non-Morse row moved, here or in `DecoderBench`'s
+larger corpus — the fixtures it declines score a hard zero rather than a marginal one.
 
 ---
 
@@ -150,7 +178,15 @@ exists to close.
 ## How to regenerate
 
 `HistoryBench.kt` is not committed to the repo — it is a portable probe, kept in the
-session scratchpad. To re-run across history:
+session scratchpad.
+
+**Scratchpads are per-session, so "the session scratchpad" is not a location.** The D-18
+run recovered the probe from an earlier session's directory by searching for it by name; it
+is now copied forward again. If it is ever lost, this file becomes unreproducible and its
+own rule — never re-baseline with a newer probe — makes rewriting it useless. Worth
+committing, which is an owner's call because it changes what the repo claims about itself.
+
+To re-run across history:
 
 ```sh
 # 1. One worktree per commit, with the probe dropped in

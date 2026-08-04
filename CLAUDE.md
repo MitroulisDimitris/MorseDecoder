@@ -76,6 +76,7 @@ isn't the app that was specified. Each traces to a principle in §1 of the requi
 BENCH=1 ./gradlew :core:test --tests "*DecoderBench*" -i         # scenario matrix + ablations
 BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats (the D-8 question)
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees
+DIAG=1  ./gradlew :core:test --tests "*FileGateDiagnostic*" -i   # which file-path guard declined, and what it cost
 ```
 
 Benches assert nothing and are skipped unless their env var is set. They are instruments,
@@ -118,7 +119,9 @@ Each of these is a measured result, not a preference.
 ## Where it stands
 
 Live path mean CER **13.1 %** across 16 scenarios, worst case **65.9 %** on `hand-13-rough`
-(a rough 13 WPM fist). File path mean **15.6 %**. All six milestones of §7 of the
+(a rough 13 WPM fist). File path mean **15.6 %**. Those are `HistoryBench` figures;
+`DecoderBench` uses a shorter text and reports 14.9 % / 11.6 %, and the two are not
+interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 
