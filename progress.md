@@ -19,7 +19,7 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ## Where we are — 2026-08-05
 
-Fourteen commits over eight days. Both decode paths exist and work, the app builds, and the
+Fifteen commits over eight days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
@@ -31,8 +31,8 @@ error. Four things are true at the same time:
   generator's ground truth in turn. Freezing the pass-2 Kalman takes the file path from
   64.6 % to **36.7 %**; handing it a perfect element timeline is worth **1.3 points**,
   because segmentation is already exact — 214 marks against 214 true, none fragmented,
-  merged, spurious or dropped. See N-5, which is now the largest measured win available and
-  is waiting on one decision.
+  merged, spurious or dropped. See N-5: the largest measured win available, and AC-6 turned
+  out to settle the design question that looked like it would block it.
 - **Nothing has ever run on a phone.** Every result is from unit tests.
 
 | | first commit | now | source |
@@ -57,7 +57,7 @@ trusted one outlier, and a veto that ranked real Morse below speech.
 
 ## The commits
 
-Fourteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+Fifteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
 omitted; the rest are below, including the three that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
@@ -74,7 +74,8 @@ omitted; the rest are below, including the three that changed no decoder behavio
 | 10 | `7d1a2b5` | 08-03 | D-17 seed guard | **13.1 %** |
 | 11 | `953baf5` | 08-03 | CLAUDE.md rewrite | — (docs only) |
 | 12 | `d08fadb` | 08-04 | D-18 file gate | 13.1 % (file path only) |
-| 13 | *(this commit)* | 08-05 | 6a residual | — (diagnostic only) |
+| 13 | `5956a7e` | 08-05 | 6a residual | — (diagnostic only) |
+| 14 | *(this commit)* | 08-05 | 6b unblocked | — (docs only) |
 
 ### 1 · `ad5479d` — init
 
@@ -239,7 +240,7 @@ ranks a genuine rough fist (0.0987) *below* speech (0.4741), knocking (0.4033) a
 **Note.** Two of the last three changes were *deletions of a wrong assumption*, not new
 machinery, and both were found by building a diagnostic before writing a fix.
 
-### 13 · *(this commit)* — attribute the residual error (step 6a)
+### 13 · `5956a7e` — attribute the residual error (step 6a)
 
 **Problem.** After D-17 and D-18 both paths reached `hand-13-rough` with a sound unit
 estimate and both still got two thirds of it wrong. The plan's largest item (step 6, the
@@ -256,8 +257,28 @@ is already exact at 214/214 with zero defects. Freezing costs **0.0** on `drift-
 
 **Consequences.** Step 6 is closed as unjustified on current evidence and `prior-art.md`
 idea 1 is annotated with its measured 1.3-point ceiling. N-5 and step 6b are opened in their
-place: the largest measured win on the board, blocked on one question about what FM-2's
-speed track is for.
+place: the largest measured win on the board.
+
+### 14 · *(this commit)* — unblock 6b; AC-6 answers what FM-2's track is for
+
+**Problem.** N-5 was filed asking the owner whether FM-2's speed track is a reporting
+feature or something the decode is entitled to consume. The repo already answered.
+
+**What changed.** Docs only. **AC-6** decodes a 15 → 25 WPM ramp and asserts every
+`wpmTrack` point after the convergence window is within **10 %** of the generator's own
+track, over at least 20 points. A frozen tracker reports one speed for the whole ramp and
+cannot satisfy that — so "freeze the Kalman" was never a candidate fix, only the measurement
+device row B of the ladder always was. FM-2's wording is "**Report** a global WPM plus a
+per-segment WPM track", and AC-6 requires the report to be accurate.
+
+That fixes 6b's shape without an owner decision: **separate the two jobs.** Decode against
+the locked pass-1 unit — which is what FM-1 already specifies and pass 2 re-opens — and
+derive the reported track alongside it without feeding it back. `DecodedChar.unitMsLocal`,
+the per-character shrunk least-squares fit, is the natural source and already exists.
+
+**Consequence.** 6b moves from blocked to ready and is the next step. The decisions list
+loses its newest entry, which is the right outcome for a question the specification had
+already settled.
 
 ---
 
@@ -432,19 +453,33 @@ The mechanism is straightforward once stated: `hand-13-rough` has 12 % *per-char
 so each character's local unit estimate is genuinely biased, and a tracker whose job is to
 follow the local unit follows the bias. Pass 1 already knew the right answer.
 
-**Not simply "freeze it", and that is why this is a plan step and not a patch.** Three things
+**Not simply "freeze it", and the constraint is sharper than it first looked.** Three things
 depend on that Kalman beyond the decode:
 
-- `wpmTrack` — FM-2's per-segment speed track, exported in `.json`
-- `unitMs` / `wpm` on `FileResult`, which the UI displays
+- `wpmTrack` — FM-2's per-segment speed track, built from `unitMsGlobal` per character
+- `unitMs` / `wpm` on `FileResult`, which the UI displays (`MainActivity.kt:185`)
 - `atSpeedCeiling`, which is D-16's honest-failure guard on this path
 
-Freezing it flattens the speed track FM-2 asks for. The likely shape of the fix is to
-separate the two jobs — decode against the locked pass-1 unit, and track a *reported* speed
-alongside it — or to damp the tracker so per-character bias cannot move it. Which of those
-is right depends on what FM-2's track is for, and that is worth one owner decision before
-anything is written. **This does not apply to the live path**, where the Kalman is the only
-unit estimate that exists after bootstrap.
+**`wpmTrack` is guarded by an acceptance criterion.** AC-6 decodes a 15 → 25 WPM ramp and
+asserts every track point after the convergence window is within **10 %** of the generator's
+own `wpmTrack`, over at least 20 points. A frozen tracker reports one constant speed for
+that whole ramp and cannot satisfy it. So "freeze the Kalman" is not a candidate fix — it is
+only a *measurement device*, which is all row B of the ladder ever claimed to be.
+
+That settles the question this entry originally posed. FM-2 says **"Report** a global WPM
+plus a per-segment WPM track", and AC-6 requires that report to be accurate — so the track
+is a reporting obligation that must stay correct, not something the decode is entitled to
+consume. The fix has to **separate the two jobs**: decode against the locked pass-1 unit
+(FM-1's "parameters already locked", which pass 2 currently re-opens), and derive the
+reported track alongside it without feeding it back.
+
+The material for that already exists — `DecodedChar.unitMsLocal` is the per-character
+shrunk least-squares fit, which is what a speed track should be built from anyway. Whether a
+track derived that way holds AC-6 within 10 % is the one thing 6b must measure before
+anything else.
+
+**This does not apply to the live path**, where the Kalman is the only unit estimate that
+exists after bootstrap.
 
 ### N-3 — The file path declined a fit it could decode · FIXED by D-18
 
@@ -500,11 +535,14 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Three of thirteen are done, one is closed unstarted.** Of the nine still open, **four are
-ready** to start today (2, 4a, 3, 4) and **five are blocked** — four of those on an owner
-decision rather than on effort (6b, 5, 7, 9) and one on the toolchain (8). The decisions are
-collected at the foot of this file, and **6b is the one worth answering first**: it is the
-largest measured win on the board and it is waiting on a question, not on work.
+**Three of thirteen are done, one is closed unstarted.** Of the nine still open, **five are
+ready** to start today (**6b**, 2, 4a, 3, 4) and **four are blocked** — three on an owner
+decision rather than on effort (5, 7, 9) and one on the toolchain (8). The decisions are
+collected at the foot of this file.
+
+**6b is next.** It is the largest measured win on the board — 27.9 CER points on the worst
+file scenario — and AC-6 turned out to settle the design question that was holding it, so it
+needs no decision, only care.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
@@ -515,7 +553,7 @@ largest measured win on the board and it is waiting on a question, not on work.
 | 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
 | 6a | Locate the residual error | **done** · this commit | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
-| 6b | *(new)* Stop the pass-2 tracker re-opening what pass 1 locked | **blocked** · owner decision on what FM-2's speed track is for | small | **The largest measured win available: `hand-13-rough` file 64.6 % → 36.7 %**, measured, with zero cost on `drift-ramp` and `wobble`. File mean would follow to ~9.9 % (arithmetic, one row of 16). Live path unaffected | measured (N-5) |
+| 6b | *(new)* Stop the pass-2 tracker re-opening what pass 1 locked | **ready** | small–medium | **The largest measured win available: `hand-13-rough` file 64.6 % → 36.7 %**, measured, with zero cost on `drift-ramp` and `wobble`. File mean would follow to ~9.9 % (arithmetic, one row of 16). Live path unaffected. **Must keep AC-6 green** — the reported track has to stay within 10 % through a ramp, so the decode unit and the reported speed have to be separated rather than the tracker frozen | measured (N-5) |
 | 5 | The tone-jump deadlock | **blocked** · owner decision on N and the D-7 trade | small | Recovers a session that is currently dead until restarted. One `SessionSequenceTest` known failure (D-9) should start passing. Risk: AC-9 must stay green | derived |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
@@ -733,23 +771,16 @@ its passwords live is the owner's decision.
 
 These block work that is otherwise ready. Listed so they can be answered together.
 
-1. **What is FM-2's speed track for?** (step 6b, N-5) — **answer this one first.** The
-   pass-2 Kalman costs 27.9 CER points on the worst file scenario and buys nothing on either
-   drift fixture, but three things ride on it: `wpmTrack` in the `.json` export, the speed
-   the UI displays, and D-16's `atSpeedCeiling` guard. If the track is a reporting feature,
-   decode against the locked pass-1 unit and track speed separately. If something is meant
-   to *act* on it, the tracker needs damping instead. Largest measured win on the board,
-   waiting on a question rather than on work.
-2. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
+1. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
    be taken away during a legitimate pause.
-3. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
+2. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
    truth for a recording that is only partly legible.
-4. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
+3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
    sideloading to a physical handset.
-5. **Keystore location** (step 9).
-6. **§8 of the requirements is still open** — export-with-audio and practice mode remain
+4. **Keystore location** (step 9).
+5. **§8 of the requirements is still open** — export-with-audio and practice mode remain
    unspecified.
-7. **Commit `HistoryBench.kt`?** (new) It is documented as living "in the session
+6. **Commit `HistoryBench.kt`?** (new) It is documented as living "in the session
    scratchpad", but scratchpads are per-session, so that is not a location. The D-18 run
    recovered it by searching an earlier session's directory by name. If it is lost this
    file's whole premise goes with it, because its own rule forbids re-baselining history
