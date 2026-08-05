@@ -96,6 +96,31 @@ The principle stands and the citation does not. Before this becomes the largest 
 the project, it needs a failure that survives contact with the cheap fixes — measure where
 the remaining 65.9 % accumulates first.
 
+**That measurement has now been done (`progress.md` step 6a), and it does not support this
+idea.** `ResidualDiagnostic` attributes every run the file front end produces against the
+generator's own element list, on the fixture this argument was built on:
+
+| | `hand-13-rough` |
+|---|---|
+| measured marks against true | **214 / 214, 1.00×** |
+| clean / fragmented / merged / spurious / dropped | **214 / 0 / 0 / 0 / 0** |
+| median leading-edge error | **0.7 ms — 1 % of a dot** |
+| median duration error | **1.4 %** |
+
+The Schmitt trigger is not making errors on this signal. Handing the decoder *perfect*
+runs — the generator's own timeline, which is the best any soft front end could ever
+converge to — moves CER from 64.6 % to **63.3 %**. That is the entire ceiling of this idea
+on the worst scenario in the bench: **1.3 points.**
+
+Meanwhile freezing the pass-2 Kalman on the same fixture is worth **27.9 points**. The error
+this idea was proposed to fix is real, and it is downstream of the front end.
+
+So idea 1 is not withdrawn as a principle — hard decisions early are still a design smell,
+and on a *real* recording with genuine noise the front end may well be doing worse than it
+does on synthetic audio at +5 dB. But it can no longer be justified by `hand-13-rough`, and
+that was the only evidence it had. It should not be started before G-1 supplies a recording
+where the front end is measurably at fault.
+
 Our lattice is already Bayesian in shape; the front end is not. Feeding *soft* key-state
 probabilities into the lattice instead of hard runs is the single most architecturally
 significant idea in this note. It is also the largest change, and it would touch

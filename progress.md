@@ -17,9 +17,9 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ---
 
-## Where we are — 2026-08-04
+## Where we are — 2026-08-05
 
-Thirteen commits over seven days. Both decode paths exist and work, the app builds, and the
+Fourteen commits over eight days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
@@ -27,11 +27,12 @@ error. Four things are true at the same time:
 - **A rough hand-sent fist is not.** The worst scenario decodes at 65.9 % on the live path
   and 64.6 % from a file — still two thirds wrong on both, and nothing in the system warns
   that it is wrong.
-- **That error is no longer explained by acquisition or the timebase.** D-18 measured the
-  file path fitting `hand-13-rough` at `u0` 89.2 ms against a true 92.3 — correct to 1.04× —
-  and it still decodes at 64.6 %. Both paths now reach that scenario with a sound unit
-  estimate and both get two thirds of it wrong, so the remaining error is in segmentation
-  under jitter, tracking, or the lattice. Nobody has measured which.
+- **That error is attributed, and it is the speed tracker.** Step 6a handed each stage the
+  generator's ground truth in turn. Freezing the pass-2 Kalman takes the file path from
+  64.6 % to **36.7 %**; handing it a perfect element timeline is worth **1.3 points**,
+  because segmentation is already exact — 214 marks against 214 true, none fragmented,
+  merged, spurious or dropped. See N-5, which is now the largest measured win available and
+  is waiting on one decision.
 - **Nothing has ever run on a phone.** Every result is from unit tests.
 
 | | first commit | now | source |
@@ -56,8 +57,8 @@ trusted one outlier, and a veto that ranked real Morse below speech.
 
 ## The commits
 
-Thirteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
-omitted; the rest are below, including the two that changed no code.
+Fourteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+omitted; the rest are below, including the three that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
 |---|---|---|---|---|
@@ -72,7 +73,8 @@ omitted; the rest are below, including the two that changed no code.
 | 9 | `9b52819` | 08-03 | clamp-suppress | **21.9 %** |
 | 10 | `7d1a2b5` | 08-03 | D-17 seed guard | **13.1 %** |
 | 11 | `953baf5` | 08-03 | CLAUDE.md rewrite | — (docs only) |
-| 12 | *(this commit)* | 08-04 | D-18 file gate | 13.1 % (file path only) |
+| 12 | `d08fadb` | 08-04 | D-18 file gate | 13.1 % (file path only) |
+| 13 | *(this commit)* | 08-05 | 6a residual | — (diagnostic only) |
 
 ### 1 · `ad5479d` — init
 
@@ -220,7 +222,7 @@ true at the first commit and false for eleven after it.
 
 **What changed.** Docs only. Resolves what was *Decisions needed* 6.
 
-### 12 · *(this commit)* — retire the file path's fit veto (D-18)
+### 12 · `d08fadb` — retire the file path's fit veto (D-18)
 
 **Problem.** The plan said the file path declined `hand-13-rough` because
 `MorseDecoder.twoMeansSeed` had the same unguarded 2-means D-17 fixed. It does not — it
@@ -236,6 +238,26 @@ ranks a genuine rough fist (0.0987) *below* speech (0.4741), knocking (0.4033) a
 
 **Note.** Two of the last three changes were *deletions of a wrong assumption*, not new
 machinery, and both were found by building a diagnostic before writing a fix.
+
+### 13 · *(this commit)* — attribute the residual error (step 6a)
+
+**Problem.** After D-17 and D-18 both paths reached `hand-13-rough` with a sound unit
+estimate and both still got two thirds of it wrong. The plan's largest item (step 6, the
+soft-decision front end) was aimed at that residual without anyone knowing where it lived.
+
+**What changed.** No behaviour. `ResidualDiagnostic` runs a counterfactual ladder on the
+file path, handing each stage the generator's ground truth in turn, plus a whole-recording
+segmentation attribution.
+
+**Measured.** Tracking is worth **27.9 points** (64.6 % → 36.7 % with the Kalman frozen);
+segmentation is worth **1.3** (64.6 % → 63.3 % with a perfect element timeline), because it
+is already exact at 214/214 with zero defects. Freezing costs **0.0** on `drift-ramp` and
+`wobble`.
+
+**Consequences.** Step 6 is closed as unjustified on current evidence and `prior-art.md`
+idea 1 is annotated with its measured 1.3-point ceiling. N-5 and step 6b are opened in their
+place: the largest measured win on the board, blocked on one question about what FM-2's
+speed track is for.
 
 ---
 
@@ -292,7 +314,8 @@ is stated and labelled with what it rests on.
 |---|---|---|---|
 | `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **and it now has no reproducer** | 4a, then 4 |
 | `known-issues` D-2 | High | Live path decodes real hand-sent audio far worse than file import — a bad bootstrap it never revisits | 3 |
-| `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / 64.6 % (file, since D-18) | **6a — nothing else bounds low enough** |
+| `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / 64.6 % (file, since D-18) | 6b — 6a attributed it to tracking |
+| **N-5** (new) | High | On the file path the pass-2 tracker costs 27.9 points and buys nothing | 6b |
 | `known-issues` D-8 | High | Speech and RTTY decode as Morse; the fit score cannot separate them | 7 (blocked) |
 | `known-issues` D-9 | High | A tone change mid-session strands the lock permanently | 5 (blocked) |
 | `known-issues` D-10 | Medium | Tone readout stays ~76 Hz off after recovering from a wrong lock | — none planned |
@@ -384,6 +407,45 @@ scenario's worst column; at 512 the error is a third lower. And `AudioRecord` ch
 buffer size from device hardware — G-2 lists buffer sizing as unexercised, and this says it
 is not a performance detail but something that changes the transcript.
 
+### N-5 — On the file path, the pass-2 tracker is pure loss
+
+Found by step 6a. FM-1 says file mode fits its parameters over the whole recording and then
+decodes with them **locked**; the code then runs a Kalman in pass 2 anyway, with the comment
+"Kalman still tracks drift (FM-2)". Measured with `ResidualDiagnostic`, freezing that
+tracker at the pass-1 unit:
+
+| scenario | shipped | frozen | change |
+|---|---|---|---|
+| **`hand-13-rough`** (25 % jitter, 12 % per-char bias) | **64.6 %** | **36.7 %** | **−27.9** |
+| `hand-18` (20 % jitter) | 8.9 % | 8.9 % | 0.0 |
+| `clean-20` | 0.0 % | 0.0 % | 0.0 |
+| `drift-ramp` (15 → 25 WPM over 60 s) | 0.0 % | 0.0 % | **0.0** |
+| `wobble` (±15 % at 0.05 Hz) | 0.0 % | 0.0 % | **0.0** |
+
+The last two rows are the ones that make this a defect rather than a trade-off. They exist
+precisely to exercise drift tracking, and the tracker contributes **nothing** on either —
+pass 1's global fit plus the lattice's per-character shrinkage (FR-5.6) already absorb the
+drift. So on the file path the tracker is not buying drift tolerance at the cost of jitter
+tolerance. It is buying nothing and costing 27.9 points on the worst scenario.
+
+The mechanism is straightforward once stated: `hand-13-rough` has 12 % *per-character* bias,
+so each character's local unit estimate is genuinely biased, and a tracker whose job is to
+follow the local unit follows the bias. Pass 1 already knew the right answer.
+
+**Not simply "freeze it", and that is why this is a plan step and not a patch.** Three things
+depend on that Kalman beyond the decode:
+
+- `wpmTrack` — FM-2's per-segment speed track, exported in `.json`
+- `unitMs` / `wpm` on `FileResult`, which the UI displays
+- `atSpeedCeiling`, which is D-16's honest-failure guard on this path
+
+Freezing it flattens the speed track FM-2 asks for. The likely shape of the fix is to
+separate the two jobs — decode against the locked pass-1 unit, and track a *reported* speed
+alongside it — or to damp the tracker so per-character bias cannot move it. Which of those
+is right depends on what FM-2's track is for, and that is worth one owner decision before
+anything is written. **This does not apply to the live path**, where the Kalman is the only
+unit estimate that exists after bootstrap.
+
 ### N-3 — The file path declined a fit it could decode · FIXED by D-18
 
 Kept for the record; the diagnosis and its measurements are `decisions.md` D-18.
@@ -438,10 +500,11 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Two of twelve are done.** Of the ten open, **five are ready** to start today (2, 4a, 3, 4,
-6a) and **five are blocked** — three of those on an owner decision rather than on effort
-(5, 7, 9), one on another step (6 on 6a), one on the toolchain (8). The decisions are
-collected at the foot of this file.
+**Three of thirteen are done, one is closed unstarted.** Of the nine still open, **four are
+ready** to start today (2, 4a, 3, 4) and **five are blocked** — four of those on an owner
+decision rather than on effort (6b, 5, 7, 9) and one on the toolchain (8). The decisions are
+collected at the foot of this file, and **6b is the one worth answering first**: it is the
+largest measured win on the board and it is waiting on a question, not on work.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
@@ -451,18 +514,21 @@ collected at the foot of this file.
 | 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
 | 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
-| 6a | *(new)* Locate the residual error | ready | medium | No behaviour change. Splits the ~65 % on `hand-13-rough` into segmentation / tracking / lattice. This is what decides whether step 6 is justified | derived |
+| 6a | Locate the residual error | **done** · this commit | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
+| 6b | *(new)* Stop the pass-2 tracker re-opening what pass 1 locked | **blocked** · owner decision on what FM-2's speed track is for | small | **The largest measured win available: `hand-13-rough` file 64.6 % → 36.7 %**, measured, with zero cost on `drift-ramp` and `wobble`. File mean would follow to ~9.9 % (arithmetic, one row of 16). Live path unaffected | measured (N-5) |
 | 5 | The tone-jump deadlock | **blocked** · owner decision on N and the D-7 trade | small | Recovers a session that is currently dead until restarted. One `SessionSequenceTest` known failure (D-9) should start passing. Risk: AC-9 must stay green | derived |
-| 6 | Soft-decision front end | **blocked** · on step 6a | large | **Unquantified, and that is the point.** Its stated target — the 4× unit error — no longer exists. What remains is the 64.6 %/65.9 % residual whose location nobody has measured | guess |
+| 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
 | 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
 | 9 | Signing config | **blocked** · owner decision on keystore location | small | No decode change. `assembleRelease` currently produces an APK that will not install | measured |
 
-Two things this table is deliberately not claiming. **No step below is expected to fix
-`known-issues` D-6** — steps 3 and 6 both bound out above the current file-path result, and
-the shared residual is unattributed until 6a runs. And **no step improves the mean much**:
-the mean is already 13.1 %, carried by eleven scenarios at or below 4 %. Everything left is
-worst-case and honesty work.
+**No step here closes `known-issues` D-6.** 6b takes the file path to 36.7 %, which is a
+large improvement and still not "decoded". 6a measured the floor this architecture reaches
+on that fixture with every stage handed the truth: **32.9 %**. Below that needs a better
+lattice or better mark/gap models under jitter, and nobody has proposed either.
+
+And **no step improves the mean much**, because the mean is already carried by eleven
+scenarios at or below 4 %. Everything left is worst-case and honesty work.
 
 ### Step 1 — Reject a degenerate bootstrap seed · **DONE**, `decisions.md` D-17
 
@@ -571,41 +637,69 @@ trade — extending recovery to proven locks means a lock could be taken away du
 legitimate pause if another station is active. Not started for that reason, not for
 difficulty.
 
-### Step 6a — Locate the residual error · medium · **new, and it gates step 6**
+### Step 6a — Locate the residual error · **DONE** · `ResidualDiagnostic`
 
-Both paths now reach `hand-13-rough` with a sound unit estimate and both get roughly two
-thirds of it wrong. That is the single largest unexplained number in the project, and it is
-unattributed:
+Both paths reached `hand-13-rough` with a sound unit estimate and both got roughly two
+thirds of it wrong. `ResidualDiagnostic` hands each stage the generator's ground truth in
+turn, on the file path, where there is no warmup, no bootstrap and no chunk dependency:
 
-| | unit estimate | CER | what is exonerated |
-|---|---|---|---|
-| live, after D-17 | 21.5 WPM vs 13 true (1.65×) | 65.9 % | the seed |
-| **file, after D-18** | **89.2 ms vs 92.3 true (1.04×)** | **64.6 %** | the seed *and* the timebase |
+| | `hand-13-rough` | isolates |
+|---|---|---|
+| **A** shipped file path | **64.6 %** | baseline |
+| **B** + frozen Kalman | **36.7 %** | **tracking** |
+| C + truth models | 74.7 % | the fitted model |
+| **D** + TRUE runs | **63.3 %** | **segmentation** |
+| E + TRUE runs, truth models, frozen | 32.9 % | everything but the lattice |
 
-The file row is the informative one. Two-pass, no warmup, fitted over the whole recording,
-unit correct to 4 % — every excuse the live path has is gone, and the answer is the same.
-So the error lives in one of three places and the diagnostics can say which:
+Row A reproduces `DecoderBench`'s file column exactly on all five scenarios, which is what
+validates the replication.
 
-- **segmentation** under 25 % jitter — `BootstrapDiagnostic` already attributes runs against
-  the generator's element list; extend that past the seed to the whole recording and count
-  merges, splits and dropped marks
-- **tracking** — the Kalman chasing jitter it should ignore; compare against a frozen unit
-- **the lattice** — feed known-correct element durations and see what the decoder makes of
-  them
+**The answer is tracking, and it is not close.** Freezing the pass-2 Kalman is worth
+**27.9 points**; handing the decoder a perfect element timeline is worth **1.3**.
 
-Cheap, because all three counterfactuals are available from the generator's ground truth
-and no decoder change is needed to measure any of them.
+Segmentation is not merely adequate, it is exact:
 
-### Step 6 — Soft-decision front end · large · `prior-art.md` idea 1 · **blocked on 6a**
+| | `hand-13-rough` |
+|---|---|
+| measured marks against true | **214 / 214, 1.00×** |
+| clean / fragmented / merged / spurious / dropped | **214 / 0 / 0 / 0 / 0** |
+| median leading-edge error | 0.7 ms — **1 % of a dot** |
+| median duration error | 1.4 % |
+
+Two further results worth keeping:
+
+- **Row C is *worse* than baseline** (74.7 % against 64.6 %). The "true" model — a 2.1:1
+  ratio at σ 0.25 — describes this fist less well than the model fitted from its own marks
+  at σ 0.33. The EM fit is doing its job; idealised parameters are not an improvement.
+- **The tracker earns nothing on the file path.** Freezing it costs **0.0 points** on both
+  `drift-ramp` (15 → 25 WPM over 60 s) and `wobble` (±15 %), the two scenarios that exist
+  to exercise it. So on this path it is not a drift/jitter trade-off being struck badly —
+  it is pure loss on the fixtures measured. See N-5.
+
+What remains after every stage is given the truth is **32.9 %**, which is the lattice and
+the mark/gap models under 25 % jitter. That is the floor this architecture reaches on this
+fixture, and it is where any further D-6 work has to go once N-5 is dealt with.
+
+### Step 6b — Stop the pass-2 tracker re-opening what pass 1 locked · **new, from 6a** · N-5
+
+The highest-leverage item on this list, and it came out of a measurement rather than a
+plan. See N-5 for the evidence and the spec tension it has to resolve.
+
+### Step 6 — Soft-decision front end · large · `prior-art.md` idea 1 · **not justified**
 
 Stop making hard mark/gap decisions early; carry likelihoods into the lattice.
 
-**Its main argument is gone and the step must be re-justified before it is started.** That
-argument was the 4× unit error on `hand-13-rough`, which D-17 removed for a few lines of
-guard — and D-18 has since shown that even a *correct* timebase leaves 64.6 % on the same
-scenario, so the front end is not obviously the thing standing between us and a good decode.
-It is the largest item on this list and it currently has no measured target. Step 6a
-supplies one, or shows the effort belongs elsewhere.
+**Step 6a measured its ceiling and it is 1.3 points.** The argument was always that the
+Schmitt trigger's hard decisions corrupt everything downstream; on `hand-13-rough` the front
+end produces 214 marks against 214 true, none fragmented, merged, spurious or dropped, with
+a median leading-edge error of 1 % of a dot. Handing the lattice the generator's own
+timeline — the best any soft front end could converge to — moves CER 64.6 % → 63.3 %.
+
+Its first justification (the 4× unit error) was removed by D-17 for a few lines of guard.
+Its second (the residual after a correct timebase) is now measured and belongs to tracking,
+not to the front end. **Do not start this on synthetic evidence.** It may still be right on
+a real recording, where the envelope is not a clean +5 dB synthetic — but that is G-1's
+question, and this step should stay closed until G-1 can pose it.
 
 ### Step 7 — Real corpus · blocked on a decision · `G-1`
 
@@ -639,16 +733,23 @@ its passwords live is the owner's decision.
 
 These block work that is otherwise ready. Listed so they can be answered together.
 
-1. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
+1. **What is FM-2's speed track for?** (step 6b, N-5) — **answer this one first.** The
+   pass-2 Kalman costs 27.9 CER points on the worst file scenario and buys nothing on either
+   drift fixture, but three things ride on it: `wpmTrack` in the `.json` export, the speed
+   the UI displays, and D-16's `atSpeedCeiling` guard. If the track is a reporting feature,
+   decode against the locked pass-1 unit and track speed separately. If something is meant
+   to *act* on it, the tracker needs damping instead. Largest measured win on the board,
+   waiting on a question rather than on work.
+2. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
    be taken away during a legitimate pause.
-2. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
+3. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
    truth for a recording that is only partly legible.
-3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
+4. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
    sideloading to a physical handset.
-4. **Keystore location** (step 9).
-5. **§8 of the requirements is still open** — export-with-audio and practice mode remain
+5. **Keystore location** (step 9).
+6. **§8 of the requirements is still open** — export-with-audio and practice mode remain
    unspecified.
-6. **Commit `HistoryBench.kt`?** (new) It is documented as living "in the session
+7. **Commit `HistoryBench.kt`?** (new) It is documented as living "in the session
    scratchpad", but scratchpads are per-session, so that is not a location. The D-18 run
    recovered it by searching an earlier session's directory by name. If it is lost this
    file's whole premise goes with it, because its own rule forbids re-baselining history

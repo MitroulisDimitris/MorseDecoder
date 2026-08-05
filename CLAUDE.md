@@ -77,6 +77,7 @@ BENCH=1 ./gradlew :core:test --tests "*DecoderBench*" -i         # scenario matr
 BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats (the D-8 question)
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees
 DIAG=1  ./gradlew :core:test --tests "*FileGateDiagnostic*" -i   # which file-path guard declined, and what it cost
+DIAG=1  ./gradlew :core:test --tests "*ResidualDiagnostic*" -i   # which stage the remaining error comes from
 ```
 
 Benches assert nothing and are skipped unless their env var is set. They are instruments,

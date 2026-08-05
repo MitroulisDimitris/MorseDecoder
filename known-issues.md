@@ -254,12 +254,26 @@ actively harmful, without a working unit estimate.**
 The impairment levels are aggressive but not unrealistic — this is what a beginner on a
 straight key in a noisy room looks like, which is squarely inside the intended use.
 
-The remaining 65.9 % is no longer attributable to the bootstrap. Where it goes next is an
-open question the diagnostic can answer: `BootstrapDiagnostic` reports the seed is now
-sound, so the error is accumulating in tracking, segmentation under 25 % jitter, or the
-lattice. Worth measuring before assuming the soft-decision front end
-(`prior-art.md` idea 1) is the answer — that argument rested on the 4× error, which is
-gone.
+**The remaining error is now attributed, and it is the speed tracker.** Step 6a
+(`ResidualDiagnostic`) hands each stage of the file path the generator's ground truth in
+turn:
+
+| | `hand-13-rough`, file | isolates |
+|---|---|---|
+| shipped | 64.6 % | baseline |
+| **+ frozen pass-2 Kalman** | **36.7 %** | **tracking — 27.9 points** |
+| + perfect element timeline | 63.3 % | segmentation — 1.3 points |
+| + both, plus truth models | 32.9 % | the floor: lattice and models under jitter |
+
+Segmentation is not the problem and is not even marginal: 214 measured marks against 214
+true, none fragmented, merged, spurious or dropped, median leading-edge error 1 % of a dot.
+**This closes the question this entry used to leave open, and it answers it against the
+soft-decision front end** (`prior-art.md` idea 1), whose measured ceiling here is 1.3 points.
+
+The tracker finding is `progress.md` N-5 and is being handled as step 6b. Note what it does
+*not* do: 36.7 % is a large improvement and still not a decode, and 32.9 % is the floor this
+architecture reaches on this fixture even when handed the truth at every stage. D-6 stays
+open on that basis.
 
 ---
 
