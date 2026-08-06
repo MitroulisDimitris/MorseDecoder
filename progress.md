@@ -29,16 +29,17 @@ error. Four things are true at the same time:
   `qsb-impulse` recovering from a decline to 45.6 % as a second, unplanned win. The file mean
   is **6.6 %**. The floor 6a measured with every stage handed the truth is 32.9 %, so there
   is little left on this path without a better lattice.
-- **A rough hand-sent fist is still not solved on the live path.** Step 2 (D-20) took its
-  `DecoderBench` figure from 89.9 % to **69.6 %** by making the decode chunk-invariant, but
-  that is honest fine-grained inaccuracy, not a decode. The live path (step 3) carries the
-  remaining D-6 work.
+- **A rough hand-sent fist is still not solved on the live path.** Steps 2 (D-20) and 3
+  (D-21) took its `DecoderBench` figure 89.9 → 69.6 → **65.8 %** — chunk-invariance then a
+  periodic re-bootstrap — and corrected its reported speed from 21.9 WPM to 15.1 (true 13),
+  but it is still not a decode. The live path cannot reach the file's 36.7 % because the
+  freeze that buys it (D-19) does not transfer here (N-5).
 - **Nothing has ever run on a phone.** Every result is from unit tests.
 
 | | first commit | now | source |
 |---|---|---|---|
-| Live path, mean CER | 89.7 % | **12.7 %** | `DecoderBench`, D-20 |
-| Live path, `hand-13-rough` | 227 % | **69.6 %** | `DecoderBench`, D-20 |
+| Live path, mean CER | 89.7 % | **12.3 %** | `DecoderBench`, D-21 |
+| Live path, `hand-13-rough` | 227 % | **65.8 %** | `DecoderBench`, D-21 |
 | File path, mean CER | 21.8 % | **6.6 %** | `DecoderBench`, D-19 |
 | File path, `hand-13-rough` | — | **36.7 %** | `DecoderBench`, D-19 |
 | Non-Morse fixtures emitting nothing | 1 of 5 | 3 of 5 | `version-history.md` |
@@ -81,7 +82,8 @@ omitted; the rest are below, including the three that changed no decoder behavio
 | 13 | `5956a7e` | 08-05 | 6a residual | — (diagnostic only) |
 | 14 | `5212505` | 08-05 | 6b unblocked | — (docs only) |
 | 15 | `d0d2082` | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
-| 16 | *(this commit)* | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
+| 16 | `efdfb02` | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
+| 17 | *(this commit)* | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
 
 ### 1 · `ad5479d` — init
 
@@ -387,7 +389,7 @@ is stated and labelled with what it rests on.
 | ID | Severity | Summary | Addressed by |
 |---|---|---|---|
 | `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **and it now has no reproducer** | 4a, then 4 |
-| `known-issues` D-2 | High | Live path decodes real hand-sent audio far worse than file import — a bad bootstrap it never revisits | 3 |
+| `known-issues` D-2 | High | Live path decodes real hand-sent audio worse than file import — **narrowed** by D-21's re-bootstrap (speed corrected, CER 69.6 → 65.8 %), not closed: the gap needs the D-19 freeze, which cannot transfer to live | 3 (done) |
 | `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
 | ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
 | `known-issues` D-8 | High | Speech and RTTY decode as Morse; the fit score cannot separate them | 7 (blocked) |
@@ -610,16 +612,17 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Five of thirteen are done, one is closed unstarted.** Of the seven still open, **three are
-ready** to start today (4a, 3, 4) and **four are blocked** — three on an owner decision rather
+**Six of thirteen are done, one is closed unstarted.** Of the six still open, **two are
+ready** to start today (4a, 4) and **four are blocked** — three on an owner decision rather
 than on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at the foot
 of this file.
 
-**Step 2 is done** (`decisions.md` D-20) and was not the neutral cleanup the plan called it:
-making the decode chunk-invariant moved the live numbers off the 4096 artefact, mostly for
-the better (live mean 14.9 → 12.7 %, `hand-13-rough` 89.9 → 69.6 %). **Step 3 is next** — the
-live re-bootstrap that carries the remaining D-6 work — and its ceiling is now the file path's
-36.7 %, with the live baseline it must beat freshly and honestly measured at 69.6 %.
+**Step 3 is done** (`decisions.md` D-21) and landed as a *modest* win, not the large one its
+36.7 % ceiling implied: the re-bootstrap fixes the reported speed (`hand-13-rough` 21.9 → 15.1
+WPM, true 13) and takes CER 69.6 → **65.8 %**, live mean 12.7 → **12.3 %**, but the gap to the
+file path stays open because the D-19 freeze that closes it cannot transfer to the live path
+(N-5). Its real test is a recording worse than any synthetic — G-1, still blocked. **4a is
+next** (restore a D-1 reproducer, small), then 4.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
@@ -627,7 +630,7 @@ live re-bootstrap that carries the remaining D-6 work — and its ceiling is now
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
 | 2 | Decouple the decode from buffer size | **done** · this commit (D-20) | small | **Not neutral after all.** Absolute-sample-grid processing; transcripts now byte-identical across 512…8192. `DecoderBench` fed the worst chunk, so the honest numbers improved: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 → 69.6 %**, `noise-20@-5` **43.0 → 1.3 %**. Exposed `hesitation`'s true 43 % (was a 4096 fluke at 13.9 %) and re-pointed a D-10 known-failure | measured (D-20) |
 | 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
-| 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
+| 3 | Re-bootstrap rather than commit once | **done** · this commit (D-21) | medium | **Modest, not the 36.7 % the ceiling implied.** Batch re-fit every 16 marks, adopted in place on a material disagreement. Corrects reported speed (`hand-13-rough` 21.9 → 15.1 WPM) and CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live mean 12.7 → **12.3 %**; fires on nothing healthy. Capped short of the file's 36.7 % because the D-19 freeze cannot transfer to live (N-5) — the tracker resumes chasing bias | measured (D-21) |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
 | 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
 | 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
@@ -716,17 +719,24 @@ decodes two fixtures at 512…8192 and requires them byte-identical. The measure
 recovery tests are in D-20. Done before step 3 precisely so step 3's before/after means
 something.
 
-### Step 3 — Re-bootstrap rather than commit once · **NEXT** · medium · `known-issues` D-2
+### Step 3 — Re-bootstrap rather than commit once · **DONE** · `decisions.md` D-21
 
-Steps 1 and 2 make a bad start less likely; they do not make it recoverable. A periodic
-batch re-fit over a recent window, adopted when it disagrees materially with the tracked
-unit, would recover from a bad start without abandoning the streaming architecture. This is
-also `known-issues` D-1's third candidate direction — a large streaming-vs-batch
-disagreement is itself the degraded-state signal the system currently lacks.
+A periodic batch re-fit (every 16 marks, 2-means over the last 48), adopted **in place** on a
+material disagreement with the tracked unit. The clustering is segmentation-free, so it sees a
+correction the streaming tracker — mis-segmenting under a wrong unit — cannot.
 
-Its baseline is now honest and its ceiling has moved: on `hand-13-rough` the live path is
-**69.6 %** (D-20, chunk-invariant) and the file path's two-pass result on the same audio is
-**36.7 %** (D-19), so that is the bound re-bootstrap is chasing.
+The ceiling the plan quoted (the file's 36.7 %) turned out unreachable, and the reason is
+instructive: the file path only reaches 36.7 % by *freezing* the unit (D-19), and N-5 already
+established the freeze cannot transfer to the live path. So the re-bootstrap corrects the unit,
+the tracker resumes chasing the fist's per-character bias, and the decode re-degrades. Measured
+result: reported speed 21.9 → 15.1 WPM, CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live
+mean 12.7 → **12.3 %**, with **zero** firings on any healthy scenario (`clean-20`, `hand-18`,
+`drift-ramp`, `wobble`, the tone cases). A real but modest win, and the mechanism's real test —
+a recording worse than any synthetic — is G-1, still blocked. Full record in D-21.
+
+Also `known-issues` D-1's third candidate direction: a large streaming-vs-batch disagreement is
+itself the degraded-state signal the system lacked, and the re-fit now computes it every 16
+marks.
 
 ### Step 4a — Restore a reproducer for D-1 · small · **new, and it should come first**
 

@@ -119,8 +119,9 @@ Each of these is a measured result, not a preference.
 
 ## Where it stands
 
-Live path mean CER **12.7 %** across 16 scenarios on `DecoderBench` (worst decodable scenario
-`hand-13-rough` **69.6 %**), since D-20 made the live decode chunk-invariant. File path mean
+Live path mean CER **12.3 %** across 16 scenarios on `DecoderBench` (worst decodable scenario
+`hand-13-rough` **65.8 %**), since D-20 made the live decode chunk-invariant and D-21 added the
+periodic re-bootstrap. File path mean
 **6.6 %** on `DecoderBench` since D-19 locked the pass-2 decode unit (`hand-13-rough`
 **36.7 %**). The older `HistoryBench` live figures (mean 13.1 %, worst 65.9 %) **predate D-20
 and would move if re-run**; `HistoryBench` is not in the repo. Rulers and text lengths are not

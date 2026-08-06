@@ -71,6 +71,49 @@ class LiveEngineTest {
         }
     }
 
+    /**
+     * D-2 / step 3: the live path seeds its unit once and, on a rough fist, seeds it too
+     * fast. The periodic batch re-fit clusters recent marks directly — immune to the
+     * mis-segmentation a wrong unit causes — and adopts a corrected unit. Asserted on the
+     * reported speed (D-2's headline symptom), which the streaming tracker cannot fix alone.
+     */
+    @Test
+    fun `a bad bootstrap unit is corrected by the periodic re-fit (D-2)`() {
+        val cfg = Config(
+            text = AcceptanceTest.LONG_TEXT, wpm = 13.0, toneHz = 588.0, snrDb = 5.0,
+            dashDotRatio = 2.1, jitterFraction = 0.25, charBiasFraction = 0.12, seed = 16L,
+        )
+        val samples = SyntheticMorseGenerator.generate(cfg).samples
+
+        val off = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(rebootstrapEnabled = false))
+        feedInChunks(off, samples); off.finish()
+
+        val on = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(rebootstrapEnabled = true))
+        feedInChunks(on, samples); on.finish()
+
+        assertTrue(on.rebootstraps > 0) { "re-fit never fired on a known-bad bootstrap" }
+        // Reported speed moves materially toward the true 13 WPM (off ~22, on ~15).
+        val errOff = abs((off.wpm ?: 0.0) - 13.0)
+        val errOn = abs((on.wpm ?: 0.0) - 13.0)
+        assertTrue(errOn < errOff - 3.0) {
+            "re-fit did not correct the speed: off=${off.wpm} on=${on.wpm} (true 13)"
+        }
+    }
+
+    /** The re-fit must never disturb a healthy lock: clean code decodes identically. */
+    @Test
+    fun `the re-fit leaves a clean decode untouched (D-2)`() {
+        val samples = SyntheticMorseGenerator.generate(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 20.0, toneHz = 612.0, seed = 41L)
+        ).samples
+        val off = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(rebootstrapEnabled = false))
+        feedInChunks(off, samples); off.finish()
+        val on = LiveDecoderEngine(cfg = LiveDecoderEngine.Config(rebootstrapEnabled = true))
+        feedInChunks(on, samples); on.finish()
+        assertEquals(0, on.rebootstraps) { "re-fit fired on a healthy lock" }
+        assertEquals(text(off), text(on)) { "re-fit changed a clean decode" }
+    }
+
     @Test
     fun `live clean stream locks, converges (AC-7) and decodes with low CER`() {
         val gen = SyntheticMorseGenerator.generate(

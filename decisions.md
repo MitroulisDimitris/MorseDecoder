@@ -752,3 +752,62 @@ The file path is unaffected (two-pass, no streaming warmup). The live path's hon
 `hand-13-rough` is now 69.6 %, still not a decode — that is step 3's (re-bootstrap) job, and
 this commit gives it a baseline that no longer depends on the buffer size. `hesitation` at
 43 % is a real, newly-visible weakness that the 4096 fluke had been hiding.
+
+---
+
+## D-21 — The live path periodically re-bootstraps its unit (D-2)
+
+The live path seeds its dot unit once, from the first eight marks, and tracks from there
+(FR-5.1). When that seed is wrong the streaming tracker cannot escape it: a too-fast unit
+mis-segments the stream — dashes read as runs of dots — and those mis-segmented elements feed
+the Kalman measurements that keep the wrong unit alive. On `hand-13-rough` the live path seeds
+and holds ~55 ms against a true 92 ms and reports **21.9 WPM against a true 13**, which is the
+synthetic face of `known-issues` D-2 (the one real recording reads 30.6 WPM against 17.7 — a
+1.73× error, against this fixture's 1.68×).
+
+### The change
+
+Every 16 committed marks, cluster the last 48 marks with the same 2-means the bootstrap uses
+and, if the resulting unit disagrees with the tracked unit by more than **1.3×** either way,
+adopt it. The clustering reads dots and dashes **directly**, so unlike the tracker it is
+immune to the mis-segmentation a wrong unit produces — that is the whole reason it can see a
+correction the tracker cannot. It is counted in marks, never seconds, so a pause cannot
+trigger it (AC-9), and it is skipped while the WPM is pinned (FR-9.5 owns the unit then).
+
+Adoption is **in place**: the models are relative to the unit (`z = ln(dur/unit)`) and the
+decoder holds their `GaussianMixture` references, so overriding the Kalman and resetting the
+means to structural values is a complete re-seed with no decoder rebuild, no dropped tail, and
+the uncommitted marks — true durations — simply re-score against the corrected unit. Rebuilding
+the decoder instead (the first attempt) cost the uncommitted tail and made `hand-13-rough`
+*worse* (69.6 → 70.9 %); the in-place seam is what turned it into a gain.
+
+### Measured — a real but modest CER win, and a clearer speed win
+
+| scenario | before (step 2) | after |
+|---|---|---|
+| **live mean** | 12.7 % | **12.3 %** |
+| `hand-13-rough` | 69.6 % | **65.8 %** |
+| `hesitation` | 43.0 % | **39.2 %** |
+| `hand-13-rough` reported WPM | 21.9 (true 13) | **15.1** |
+
+Everything else is byte-identical: the re-fit fires on `hand-13-rough` and `hesitation`, and
+on **nothing** among `clean-20`, `hand-18`, `drift-ramp`, `wobble` or the tone scenarios —
+the material-disagreement gate is what keeps a healthy lock untouched. AC-5 (drift) is safe
+because the tracker follows drift, so the batch and tracked units agree and no re-fit fires;
+`drift-ramp` and `wobble` confirm it at 0 adopts.
+
+### Why the CER win is only modest, and what caps it
+
+The unit is corrected but `hand-13-rough` does not fall toward the file path's 36.7 %, because
+the file path only reaches 36.7 % by **freezing** the unit (D-19) — and N-5 established that
+the freeze cannot transfer to the live path, where the Kalman is the only estimate after
+bootstrap. So even with a re-bootstrapped unit the live tracker resumes chasing the fist's
+12 % per-character bias, and the decode re-degrades. Two variance settings after adoption
+(×2.25 and ×9 inflation) gave the same result, confirming the ceiling is the tracker's
+bias-chasing, not the adoption.
+
+So `known-issues` D-2 is **narrowed, not closed**: the "bad bootstrap it never revisits" is
+fixed and the reported speed is corrected, but the live decode is still worse than the file's
+because of a separate, live-only limitation. The mechanism's real test is a real recording
+(G-1), where the bootstrap is worse than any synthetic and the correction is worth more —
+which is exactly the case the corpus does not yet contain.

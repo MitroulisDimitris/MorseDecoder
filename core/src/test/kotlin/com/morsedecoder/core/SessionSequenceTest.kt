@@ -196,19 +196,23 @@ class SessionSequenceTest {
     @Test
     @KnownFailure("D-10", "tone readout stays off after a wrong lock")
     fun `the tone readout re-centres after recovering from a noise lock`() {
-        // Seed 43: settles ~96 Hz low. Was seed 53, which after the N-2/step-2 rewrite made
-        // acquisition deterministic happens to land on the tone — so it stopped exhibiting
-        // the defect, while the underlying mechanism (the tracking EMA cannot re-centre once
-        // it is off by more than the hysteresis window) is untouched and shows on almost
-        // every other seed. Re-pointed rather than closed: D-10 is not fixed.
-        val gen = morse(seed = 43L)
-        val session = Session()
-        session.feed(NonMorseAudio.speech(20.0, seed = 61L))
-        session.feed(gen.samples)
-        session.finish()
-        val offBy = abs(session.engine.toneHz - 612.0)
-        assertTrue(offBy < 15.0) {
-            "tone settled ${"%.1f".format(offBy)} Hz from the true 612 Hz"
+        // D-10 wants every recovery from a noise lock to re-centre on the tone. It fails
+        // because the tracking EMA cannot re-centre once it is off by more than the
+        // hysteresis window, so the lock settles tens of Hz low and stays there.
+        //
+        // Asserted across a set of seeds, not one: which seed happens to land on the tone is
+        // an accident of acquisition timing that reshuffles on any unrelated change (the
+        // N-2 rewrite flipped seed 53, the D-2 re-bootstrap flipped seed 43). The defect is
+        // that the *worst* case is tens of Hz off, and that is stable — so assert the worst.
+        val offsets = listOf(41L, 42L, 44L, 47L, 48L).map { seed ->
+            val session = Session()
+            session.feed(NonMorseAudio.speech(20.0, seed = 61L))
+            session.feed(morse(seed = seed).samples)
+            session.finish()
+            abs(session.engine.toneHz - 612.0)
+        }
+        assertTrue(offsets.max() < 15.0) {
+            "recovered tone off by up to ${"%.1f".format(offsets.max())} Hz across seeds; $offsets"
         }
     }
 

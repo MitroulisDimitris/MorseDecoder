@@ -108,9 +108,16 @@ Feeding only the clean section, or force-locking the correct tone, produces part
 legible output (`D L 4 ... C R M Q S RE O K`), so the streaming decoder is not broken —
 it is fragile about where it starts.
 
-Likely direction: re-bootstrap rather than commit once. A periodic batch re-fit over a
-recent window, adopted when it disagrees materially with the tracked unit, would recover
-from a bad start without abandoning the streaming architecture.
+**Narrowed by the periodic re-bootstrap (`decisions.md` D-21), not closed.** The "never
+revisits" half is fixed: every 16 marks the unit is re-fit from a batch of recent marks
+(2-means, segmentation-free) and adopted on a material disagreement. On the synthetic proxy
+`hand-13-rough` — a 1.68× unit error, close to this recording's 1.73× — it corrects the
+reported speed from 21.9 WPM to 15.1 (true 13) and takes CER 69.6 % → **65.8 %**. But the
+gap to the file path (36.7 %) does not close, because the file path only reaches it by
+*freezing* the unit (D-19), and N-5 established the freeze cannot transfer to the live path,
+where the Kalman is the only estimate after bootstrap — so the tracker resumes chasing the
+fist's per-character bias and the decode re-degrades. The re-bootstrap's real value is on a
+recording worse than any synthetic, i.e. this one, which stays blocked on **G-1**.
 
 ---
 
