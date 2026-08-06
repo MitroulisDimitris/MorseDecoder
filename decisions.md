@@ -586,3 +586,104 @@ guard: pass 1 fits it perfectly (`fitQuality` 1.0000, `u0` 61.8 ms against a tru
 `atSpeedCeiling` discards the result at the end of pass 2. That guard is **right** here —
 ungated the scenario emits 121 characters against 62 sent at 168.4 % CER, exactly the
 confident verbosity D-16 exists to stop. Recorded so it is not mistaken for the same defect.
+
+**Superseded by D-19.** Once pass 2 stops re-opening the locked unit, the runaway that
+tripped `atSpeedCeiling` no longer happens: `qsb-impulse` reports a sane 19.2 WPM and
+decodes at 45.6 % rather than declining. The ungated 168 % verbosity above was a *symptom*
+of the tracker running away on the impulses, not an argument for the veto.
+
+---
+
+## D-19 — On the file path, pass 2 decodes with the unit locked; the Kalman only reports
+
+FM-1 says file mode fits its parameters over the whole recording and then decodes with them
+**locked**. It did not: pass 2 ran a Kalman that re-opened the unit character by character,
+and on a rough fist that tracker followed `hand-13-rough`'s 12 % per-character bias.
+`ResidualDiagnostic` (step 6a) measured the cost at **27.9 CER points** — freezing the
+tracker took the file decode 64.6 % → 36.7 % — with **zero** cost on `drift-ramp` and
+`wobble`, the two scenarios that exist to exercise drift tracking. Pass 1's global fit plus
+the lattice's per-character shrinkage (FR-5.6) already absorb the drift the tracker was for.
+
+So the decode should not consume the tracker. But the tracker cannot simply be removed:
+FM-2 requires a reported per-segment speed track, and **AC-6** asserts it stays within 10 %
+of the sender through a 15 → 25 WPM ramp. The job was to separate the two — decode against
+the locked unit, report a track alongside without feeding it back. Getting that right took
+two measurements that refuted the obvious approaches.
+
+### The plan's proposed track source fails AC-6, and so does every other internal signal
+
+N-5 proposed reporting the track from `DecodedChar.unitMsLocal`, the per-character shrunk
+least-squares fit. Measured with `Ac6TrackDiagnostic`, with the decode unit frozen:
+
+| report source | worst dev vs the AC-6 ramp | AC-6 |
+|---|---|---|
+| `unitMsLocal` | 42.2 % | fail |
+| `unitMsRaw` (unshrunk LS) | 46.1 % | fail |
+| a dedicated reporting Kalman over `unitMsRaw` | 38.4 % | fail |
+
+Nothing derived from the decoder's own per-character measurements holds the ramp. The cause
+is structural: with the decode frame frozen, the **online mark/gap model keeps adapting**,
+and a drift-free frame plus a drifting model means the sender's drift is absorbed into
+`markModel.means[0]`. Every local unit is measured *against that model*, so they all read
+back toward the frozen unit — the track goes flat. `unitMsLocal` is shrunk toward the frozen
+unit on top of that, which is why it is worst.
+
+### The fix: freeze the unit, and measure the report against the frozen pass-1 centres
+
+The reported track is measured against the mark-cluster centres **snapshotted at the end of
+pass 1**, before any online adaptation (`RobustTimingDecoder.refMean0/refMean1`). That raw
+fit is immune to the model's drift absorption, and fed through the Kalman — which now tracks
+purely to report — it holds the ramp:
+
+| report source (frozen decode) | worst dev | AC-6 |
+|---|---|---|
+| Kalman over the reference-frame fit (**shipped**) | **8.0 %** | **pass** |
+
+`FileResult.wpmTrack` already reads `1200 / unitMsGlobal`, i.e. this Kalman, so no call site
+changed. Freezing the **models** as well as the unit was tried and rejected: it also cleans
+the track (Kalman to 8.0 %) but it regressed a 20 %-jitter fist that was *benefiting* from
+online adaptation (AC-4's `hand-18` lexicon decode 5.6 % → 7.9 %), for no decode gain on
+`hand-13-rough`. So the models keep adapting for the decode; only the *report* is measured
+against the frozen reference.
+
+### Raw mode only — measured, not assumed
+
+The freeze is applied when no lexicon prior is active (`freezeDecodeUnit = prior == null`).
+It improves the raw decode across the board, but on `hand-18` at the AC-4 text length it
+moves the residual errors to ones the lexicon cannot flip: the tracking decode + prior
+reaches 5.6 % where the frozen one stalls at 7.9 %, which would fail **AC-4** (< 6 %). The
+prior is an adaptive layer (FR-7.1); when it is engaged, let pass 2 track. The default ships
+raw (P-1/P-3), so the default gets the freeze.
+
+This is also a live illustration of the N-4 lesson. `ResidualDiagnostic` read the freeze as
+free on `hand-18` — on a 79-char text. On the AC-4 128-char text the raw decode *improves*
+(8.7 % → 7.9 %) while the assisted decode regresses, and on the `DecoderBench` text the raw
+decode regresses (8.9 % → 11.4 %). One scenario, three text lengths, three verdicts. Quote
+the instrument and the length with the number.
+
+### Measured
+
+`DecoderBench`, file path, before and after (live path byte-identical, every column):
+
+| scenario | before | after |
+|---|---|---|
+| `hand-13-rough` | 64.6 % | **36.7 %** |
+| `qsb-impulse` | declines (`atSpeedCeiling`) | **45.6 %** at a sane 19.2 WPM |
+| `hand-18` | 8.9 % | 11.4 % |
+| **file mean, 16 scenarios** | **11.6 %** | **6.6 %** |
+
+`qsb-impulse` is the second win and it was not planned. On the shipped path the tracker ran
+away to the 60 WPM ceiling on the static crashes — a D-1 scale error — and `atSpeedCeiling`
+declined the whole transmission (D-18 recorded this as the veto being *right*). With the
+unit locked at pass 1's sane `u0`, the runaway cannot happen: the decoder reports 19.2 WPM
+against a true 18, `outOfCalibratedRange` false, and decodes a real transmission poorly
+rather than declining it. The same root cause as the `hand-13-rough` win — pass 2 taking the
+unit somewhere pass 1 had not — expressed as a runaway rather than a bias chase.
+
+### What this did not do
+
+`known-issues` D-6 stays open: 36.7 % is a third right, still not a decode, and the live path
+is untouched at 89.9 %. `hand-18` costs 2.5 raw points on the short text — the price of the
+freeze, accepted against a 5-point mean improvement and a halved worst case. The live path is
+deliberately excluded: there the Kalman is the only unit estimate after bootstrap, and
+`freezeDecodeUnit` defaults off.

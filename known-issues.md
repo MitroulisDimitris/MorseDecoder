@@ -210,13 +210,14 @@ guard; the numbers below are the current state.
 `hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is still
 the worst scenario in the bench, and still fails differently in each path:
 
-- **file** — **64.6 % CER**, 79 characters, at a reported 17.9 WPM against a true 13. It
-  used to emit nothing at all; `decisions.md` D-18 retired the `fitQuality < 0.12` veto that
-  was declining it. Measured with `DecoderBench`.
+- **file** — **36.7 % CER**, down from 64.6 %, since `decisions.md` D-19 stopped pass 2
+  re-opening the locked unit and chasing the 12 % per-character bias (step 6b). Measured with
+  `DecoderBench`. This is the tracking cost 6a had attributed; what remains is the lattice and
+  the mark/gap models under 25 % jitter.
 - **live** — **65.9 % CER**, 99 characters against 99 sent, at a reported 21.5 WPM against a
   true 13. The character count is now right and the timebase is out by 1.65× rather than 4×.
   Measured with `HistoryBench`; `DecoderBench`'s shorter text puts the same scenario at
-  89.9 %.
+  89.9 %. D-19 is file-path only, so the live figure is unchanged.
 
 | Commit | chars emitted (99 sent) | CER |
 |---|---|---|
@@ -241,8 +242,8 @@ declined the transmission was the `fitQuality < 0.12` veto, on a score that rank
 (0.0987) below speech (0.4741), knocking (0.4033) and clipping (0.7386), all of which it
 decoded. Reproduce with `DIAG=1 gradlew :core:test --tests "*FileGateDiagnostic*" -i`.
 
-What remains on the file path is decode quality, not a veto: 64.6 % CER on a fit whose unit
-is right to 4 %.
+What remains on the file path is decode quality, not a veto: **36.7 % CER** (was 64.6 %
+before D-19) on a fit whose unit is right to 4 %.
 
 **What the history says about D-13.** The pre-D-13 decoder under-emitted here (66 of 99).
 D-13 made it lock reliably, and a reliable lock on a signal whose unit estimate is 4×
@@ -254,26 +255,29 @@ actively harmful, without a working unit estimate.**
 The impairment levels are aggressive but not unrealistic — this is what a beginner on a
 straight key in a noisy room looks like, which is squarely inside the intended use.
 
-**The remaining error is now attributed, and it is the speed tracker.** Step 6a
-(`ResidualDiagnostic`) hands each stage of the file path the generator's ground truth in
+**The remaining error was attributed to the speed tracker, and D-19 removed it.** Step 6a
+(`ResidualDiagnostic`) handed each stage of the file path the generator's ground truth in
 turn:
 
 | | `hand-13-rough`, file | isolates |
 |---|---|---|
-| shipped | 64.6 % | baseline |
+| shipped, pre-D-19 | 64.6 % | baseline |
 | **+ frozen pass-2 Kalman** | **36.7 %** | **tracking — 27.9 points** |
 | + perfect element timeline | 63.3 % | segmentation — 1.3 points |
 | + both, plus truth models | 32.9 % | the floor: lattice and models under jitter |
 
 Segmentation is not the problem and is not even marginal: 214 measured marks against 214
 true, none fragmented, merged, spurious or dropped, median leading-edge error 1 % of a dot.
-**This closes the question this entry used to leave open, and it answers it against the
+**This closed the question this entry used to leave open, and answered it against the
 soft-decision front end** (`prior-art.md` idea 1), whose measured ceiling here is 1.3 points.
 
-The tracker finding is `progress.md` N-5 and is being handled as step 6b. Note what it does
-*not* do: 36.7 % is a large improvement and still not a decode, and 32.9 % is the floor this
-architecture reaches on this fixture even when handed the truth at every stage. D-6 stays
-open on that basis.
+D-19 (step 6b) made that frozen-Kalman row the shipped file path: pass 2 now decodes with
+the unit locked and the Kalman only reports FM-2's track. The file decode is **36.7 %**.
+What it does *not* do: 36.7 % is a large improvement and still not a decode, and 32.9 % is
+the floor this architecture reaches on this fixture even when handed the truth at every
+stage. D-6 stays open on that basis, and the live path is untouched at 89.9 %. Below 32.9 %
+needs a better lattice or better mark/gap models under jitter, and nobody has proposed
+either.
 
 ---
 

@@ -119,10 +119,26 @@ class MorseDecoder(
             gapMix.means[2] = merged + 0.85
         }
 
-        // Pass 2 — decode with locked parameters; Kalman still tracks drift (FM-2).
-        val kalman = KalmanUnit(u0, (0.25 * u0) * (0.25 * u0))
+        // Pass 2 — decode with the pass-1 unit locked (FM-1: "parameters already locked").
+        // The Kalman keeps tracking, but only to report FM-2's per-segment speed track; it
+        // no longer feeds back into the lattice, where following `hand-13-rough`'s 12 %
+        // per-character bias cost 27.9 CER points and bought nothing on the drift scenarios
+        // (N-5, step 6b). `freezeDecodeUnit` is the split; AC-6 still holds because the
+        // reported track (`unitMsGlobal`) is the tracked unit, not the frozen decode one.
+        //
+        // Raw mode only. Measured, the freeze improves the raw decode across the board
+        // (`hand-13-rough` 64.6 -> 36.7 %, `hand-18` 8.7 -> 7.9 %), but on `hand-18` it
+        // moves the residual errors to ones the lexicon prior cannot flip, so with the assist
+        // engaged the tracking decode + prior reaches 5.6 % where the frozen one stalls at
+        // 7.9 % (AC-4). The prior is an adaptive layer (FR-7.1); when it is on, let pass 2
+        // track. The default ships raw (P-1/P-3), so the default gets the freeze.
         val prior = if (assists.lexicon) com.morsedecoder.core.assist.CwLexiconPrior() else null
-        val decoder = RobustTimingDecoder(kalman, markMix, gapMix, prior = prior)
+        val kalman = KalmanUnit(u0, (0.25 * u0) * (0.25 * u0))
+        val decoder = RobustTimingDecoder(
+            kalman, markMix, gapMix,
+            cfg = RobustTimingDecoder.Config(freezeDecodeUnit = prior == null),
+            prior = prior,
+        )
         for (run in runs) decoder.feed(run)
         decoder.flush()
 

@@ -120,9 +120,10 @@ Each of these is a measured result, not a preference.
 ## Where it stands
 
 Live path mean CER **13.1 %** across 16 scenarios, worst case **65.9 %** on `hand-13-rough`
-(a rough 13 WPM fist). File path mean **15.6 %**. Those are `HistoryBench` figures;
-`DecoderBench` uses a shorter text and reports 14.9 % / 11.6 %, and the two are not
-interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
+(a rough 13 WPM fist). File path mean **6.6 %** on `DecoderBench` since D-19 locked the
+pass-2 decode unit (worst case `hand-13-rough` **36.7 %**). Those live figures are
+`HistoryBench`; the file mean is `DecoderBench`, over a shorter text, and the two rulers are
+not interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 

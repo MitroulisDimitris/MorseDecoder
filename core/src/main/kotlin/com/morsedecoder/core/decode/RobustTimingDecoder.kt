@@ -59,6 +59,16 @@ class RobustTimingDecoder(
          * characters uncommitted. Null = file mode (commit at certain boundaries only).
          */
         val commitHorizonChars: Int? = null,
+        /**
+         * Decode against a *fixed* unit (the value the Kalman is seeded with) rather than
+         * the tracked one, while the Kalman keeps tracking for the reported speed only
+         * (N-5, step 6b). FM-1 says file mode decodes with parameters already locked; pass 2
+         * was re-opening the unit and following `hand-13-rough`'s 12 % per-character bias,
+         * costing 27.9 CER points and buying nothing on the drift scenarios. The tracked
+         * Kalman still drives `unitMsGlobal`, so FM-2's reported track — and AC-6 — are
+         * unaffected. Live mode leaves this off: there the Kalman is the only unit estimate.
+         */
+        val freezeDecodeUnit: Boolean = false,
     )
 
     data class DecodedChar(
@@ -66,6 +76,7 @@ class RobustTimingDecoder(
         val confidence: Double,      // FR-6.6
         val tStartMs: Double,
         val unitMsLocal: Double,     // FR-5.6 — exported as unitMsLocal in .json
+        val unitMsRaw: Double,       // unshrunk per-character LS fit — the honest local speed
         val unitMsGlobal: Double,    // Kalman estimate at commit time
         val fitQuality: Double,      // FR-5.8 snapshot
         val isWordStart: Boolean,
@@ -82,6 +93,8 @@ class RobustTimingDecoder(
         val unitMsRaw: Double,     // unshrunk LS fit — the Kalman measurement; feeding
                                    // the shrunk value back would let the prior dampen
                                    // its own corrections and stall drift tracking
+        val unitMsRawRef: Double,  // same fit against the frozen pass-1 centres; the Kalman
+                                   // measurement in file mode, immune to online model drift
         val nMarks: Int,
         val tStartMs: Double,
         val elements: List<FrontEnd.Run>,
@@ -103,6 +116,23 @@ class RobustTimingDecoder(
     private val pending = ArrayList<FrontEnd.Run>()
     private var nodes = ArrayList<Node>()
     private var carriedWordBreak = false
+
+    /**
+     * The unit the lattice and the online model updates measure against. Live mode reads
+     * the tracked Kalman live (unchanged). File mode, with [Config.freezeDecodeUnit], holds
+     * the seeded pass-1 unit fixed here while the Kalman tracks on only for reporting (N-5).
+     */
+    private val fixedDecodeUnitMs = kalman.unitMs
+    private val decodeUnitMs: Double
+        get() = if (cfg.freezeDecodeUnit) fixedDecodeUnitMs else kalman.unitMs
+
+    // Pass-1 mark-cluster centres, snapshotted before any online adaptation. The reported
+    // speed track (FM-2) is measured against these rather than the live, adapting model:
+    // with the decode unit frozen the online model absorbs the sender's drift into means[0],
+    // so a local unit measured against the *live* model reads back toward the frozen unit and
+    // the track goes flat (it fails AC-6 at ~42 %). Against the fixed reference it stays true.
+    private val refMean0 = markModel.means[0]
+    private val refMean1 = markModel.means[1]
 
     init {
         nodes.add(startNode())
@@ -148,7 +178,7 @@ class RobustTimingDecoder(
     // ---- lattice construction ----
 
     private fun onGap(gi: Int) {
-        val z = ln(pending[gi].durationMs / kalman.unitMs)
+        val z = ln(pending[gi].durationMs / decodeUnitMs)
         val (bLL, isWord) = boundaryScore(z)
 
         var best: Node? = null
@@ -179,7 +209,7 @@ class RobustTimingDecoder(
     private fun bestCandidate(p: Int, gi: Int, prevChar: Char?): CharCand? {
         val nMarks = (gi - p + 1) / 2
         val entries = MorseTrie.byLength[nMarks] ?: emptyList()
-        val lnUg = ln(kalman.unitMs)
+        val lnUg = ln(decodeUnitMs)
         val kappa = cfg.shrinkagePseudoCount
 
         val allLLs = ArrayList<Double>(entries.size + 1)
@@ -187,6 +217,7 @@ class RobustTimingDecoder(
         var bestToken: String? = null
         var bestLnU = lnUg
         var bestLnURaw = lnUg
+        var bestLnURawRef = lnUg
         // Timing-only winner, tracked in parallel so a prior-changed outcome is
         // detectable and can be marked (P-3).
         var bestRawLL = Double.NEGATIVE_INFINITY
@@ -194,13 +225,16 @@ class RobustTimingDecoder(
 
         for (e in entries) {
             // Local unit: log-space least squares on this segment's marks only
-            // (FR-5.4/D-2), shrunk toward the global estimate (FR-5.6).
+            // (FR-5.4/D-2), shrunk toward the global estimate (FR-5.6). `accRef` is the
+            // same fit against the frozen pass-1 centres, for the reported speed track only.
             var acc = 0.0
+            var accRef = 0.0
             var k = 0
             var i = p
             while (i < gi) {
                 val c = if (e.pattern[k] == '.') 0 else 1
                 acc += ln(pending[i].durationMs) - markModel.means[c]
+                accRef += ln(pending[i].durationMs) - (if (c == 0) refMean0 else refMean1)
                 k++; i += 2
             }
             val lnULS = acc / nMarks
@@ -221,7 +255,7 @@ class RobustTimingDecoder(
             if (ll > bestRawLL) { bestRawLL = ll; bestRawToken = e.token }
             if (prior != null) ll += prior.logPrior(prevChar, e.token)
             allLLs.add(ll)
-            if (ll > bestLL) { bestLL = ll; bestToken = e.token; bestLnU = lnU; bestLnURaw = lnULS }
+            if (ll > bestLL) { bestLL = ll; bestToken = e.token; bestLnU = lnU; bestLnURaw = lnULS; bestLnURawRef = accRef / nMarks }
         }
 
         // Undecodable placeholder competes as a real hypothesis (FR-6.5) so a
@@ -229,7 +263,7 @@ class RobustTimingDecoder(
         val garbageLL = (2 * nMarks - 1) * cfg.garbagePerElementLL
         allLLs.add(garbageLL)
         if (garbageLL > bestRawLL) { bestRawToken = null }
-        if (garbageLL > bestLL) { bestLL = garbageLL; bestToken = null; bestLnU = lnUg; bestLnURaw = lnUg }
+        if (garbageLL > bestLL) { bestLL = garbageLL; bestToken = null; bestLnU = lnUg; bestLnURaw = lnUg; bestLnURawRef = lnUg }
 
         var denom = 0.0
         for (ll in allLLs) denom += exp(ll - bestLL)
@@ -244,6 +278,7 @@ class RobustTimingDecoder(
             confidence = confidence,
             unitMsLocal = exp(bestLnU),
             unitMsRaw = exp(bestLnURaw),
+            unitMsRawRef = exp(bestLnURawRef),
             nMarks = nMarks,
             tStartMs = pending[p].startMs,
             elements = elements,
@@ -300,7 +335,11 @@ class RobustTimingDecoder(
             // fist moves 70 % in one character. When the prior itself is uncertain
             // (fresh re-lock, FR-2.12), accept anything inside the calibrated band
             // so a junk prior cannot lock out real evidence.
-            val m = cand.unitMsRaw
+            //
+            // File mode measures against the frozen pass-1 centres (unitMsRawRef): there the
+            // Kalman only reports FM-2's track and must not inherit the online model's drift
+            // absorption. Live mode measures against the live model and *drives* the decode.
+            val m = if (cfg.freezeDecodeUnit) cand.unitMsRawRef else cand.unitMsRaw
             val uncertain = kalman.variance > (0.2 * kalman.unitMs) * (0.2 * kalman.unitMs)
             val accept = (m > 0.6 * kalman.unitMs && m < 1.7 * kalman.unitMs) ||
                 (uncertain && m in 20.0..320.0)
@@ -310,7 +349,10 @@ class RobustTimingDecoder(
                 kalman.update(m, max(rBase * rBase / cand.nMarks, rMin * rMin))
             }
 
-            val lnU = ln(kalman.unitMs)
+            // Online model updates normalise against the decode unit, not the tracked one:
+            // when the decode unit is frozen (N-5) the models must stay in the same frame the
+            // lattice scored in. In live mode decodeUnitMs *is* the tracked unit, unchanged.
+            val lnU = ln(decodeUnitMs)
             for (el in cand.elements) {
                 val z = ln(el.durationMs) - lnU
                 if (el.isMark) markModel.update(z)
@@ -331,6 +373,7 @@ class RobustTimingDecoder(
                     confidence = cand.confidence,
                     tStartMs = cand.tStartMs,
                     unitMsLocal = cand.unitMsLocal,
+                    unitMsRaw = m,
                     unitMsGlobal = kalman.unitMs,
                     fitQuality = fitQuality(markModel),
                     isWordStart = isWordStart,
