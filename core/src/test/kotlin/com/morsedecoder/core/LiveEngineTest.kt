@@ -41,6 +41,36 @@ class LiveEngineTest {
 
     private fun relocks(engine: LiveDecoderEngine) = engine.events.filterIsInstance<Event.Relock>()
 
+    /**
+     * N-2 / step 2: the transcript must not depend on how the input is sliced into feed()
+     * calls. Before the sample-position rewrite the seeded unit and the CER moved with the
+     * buffer size (a 19-point spread on `hand-13-rough`); now every chunking must agree.
+     */
+    @Test
+    fun `decode is invariant to feed chunk size (N-2)`() {
+        val fixtures = listOf(
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 20.0, toneHz = 612.0, seed = 41L),
+            Config(text = AcceptanceTest.LONG_TEXT, wpm = 13.0, toneHz = 588.0, snrDb = 5.0,
+                dashDotRatio = 2.1, jitterFraction = 0.25, charBiasFraction = 0.12, seed = 16L),
+        )
+        for (cfg in fixtures) {
+            val samples = SyntheticMorseGenerator.generate(cfg).samples
+            val transcripts = listOf(512, 1024, 2048, 4096, 8192).map { chunk ->
+                val engine = LiveDecoderEngine()
+                feedInChunks(engine, samples, chunk)
+                engine.finish()
+                text(engine)
+            }
+            val reference = transcripts.first()
+            for ((i, t) in transcripts.withIndex()) {
+                assertEquals(reference, t) {
+                    "chunk ${listOf(512, 1024, 2048, 4096, 8192)[i]} diverged at ${cfg.wpm} WPM:\n" +
+                        "  512:  $reference\n  this: $t"
+                }
+            }
+        }
+    }
+
     @Test
     fun `live clean stream locks, converges (AC-7) and decodes with low CER`() {
         val gen = SyntheticMorseGenerator.generate(

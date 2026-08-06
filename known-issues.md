@@ -214,10 +214,12 @@ the worst scenario in the bench, and still fails differently in each path:
   re-opening the locked unit and chasing the 12 % per-character bias (step 6b). Measured with
   `DecoderBench`. This is the tracking cost 6a had attributed; what remains is the lattice and
   the mark/gap models under 25 % jitter.
-- **live** — **65.9 % CER**, 99 characters against 99 sent, at a reported 21.5 WPM against a
-  true 13. The character count is now right and the timebase is out by 1.65× rather than 4×.
-  Measured with `HistoryBench`; `DecoderBench`'s shorter text puts the same scenario at
-  89.9 %. D-19 is file-path only, so the live figure is unchanged.
+- **live** — **65.9 % CER** on `HistoryBench` (99 characters against 99 sent, reported
+  21.5 WPM against a true 13; timebase out by 1.65× rather than 4×). On `DecoderBench`'s
+  shorter text the same scenario read 89.9 % before step 2 and **69.6 %** after it
+  (`decisions.md` D-20 made the live decode chunk-invariant; the 89.9 % was a 4096-chunk
+  artefact). D-19 and D-20 are both live-neutral / file-neutral respectively for the *other*
+  path — the live figure moved only because step 2 stopped it depending on the buffer size.
 
 | Commit | chars emitted (99 sent) | CER |
 |---|---|---|
@@ -433,12 +435,21 @@ peak. Needs a decision on N and on whether to accept the D-7 trade at all.
 ## D-10 — Tone readout stays off after recovering from a wrong lock · Medium
 
 After the decoder recovers from a lock taken on room noise, the tracked frequency settles
-well away from the true tone and stays there: measured **~76 Hz low** on a 612 Hz signal.
+well away from the true tone and stays there: **~76–96 Hz** off on a 612 Hz signal.
 
-Decoding is unaffected — the 10 ms analysis window is roughly 100 Hz wide, so the keying
-envelope survives the offset, and the tail of that decode is clean. But the `tone` readout
-and the spectrum lock marker are simply wrong, which matters to anyone using them to tune a
+Decoding is *mostly* unaffected — the analysis window is roughly 100 Hz wide, so the keying
+envelope survives the offset — but at the larger offsets (measured up to ~96 Hz after the
+D-20 sample-grid rewrite shifted acquisition) the offset does cost the decode, not just the
+readout: a seed sweep put the recovered tone 92–98 Hz off on seven of nine seeds, and the
+`SessionSequenceTest` recovery case lands ~80 Hz low with a 19 % tail. The `tone` readout and
+the spectrum lock marker are wrong regardless, which matters to anyone using them to tune a
 radio, and the margin against a genuinely lost lock is much thinner than it looks.
+
+The `@KnownFailure("D-10")` test was re-pointed from morse seed 53 to seed 43 in D-20: the
+deterministic acquisition now lands seed 53 on the tone by luck, but the re-centring mechanism
+(the tracking EMA cannot re-centre once off by more than `trackWindowHz`) is untouched and
+shows on almost every other seed. The defect is not fixed; only the fixture that exposed it
+moved.
 
 Related to **D-3**, where a mains-vetoed frequency settles ~20 Hz off for a different
 reason. Both suggest the tracking EMA has no mechanism to re-centre once it is off by more

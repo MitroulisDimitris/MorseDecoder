@@ -119,11 +119,12 @@ Each of these is a measured result, not a preference.
 
 ## Where it stands
 
-Live path mean CER **13.1 %** across 16 scenarios, worst case **65.9 %** on `hand-13-rough`
-(a rough 13 WPM fist). File path mean **6.6 %** on `DecoderBench` since D-19 locked the
-pass-2 decode unit (worst case `hand-13-rough` **36.7 %**). Those live figures are
-`HistoryBench`; the file mean is `DecoderBench`, over a shorter text, and the two rulers are
-not interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
+Live path mean CER **12.7 %** across 16 scenarios on `DecoderBench` (worst decodable scenario
+`hand-13-rough` **69.6 %**), since D-20 made the live decode chunk-invariant. File path mean
+**6.6 %** on `DecoderBench` since D-19 locked the pass-2 decode unit (`hand-13-rough`
+**36.7 %**). The older `HistoryBench` live figures (mean 13.1 %, worst 65.9 %) **predate D-20
+and would move if re-run**; `HistoryBench` is not in the repo. Rulers and text lengths are not
+interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 

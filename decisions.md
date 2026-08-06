@@ -683,7 +683,72 @@ unit somewhere pass 1 had not — expressed as a runaway rather than a bias chas
 ### What this did not do
 
 `known-issues` D-6 stays open: 36.7 % is a third right, still not a decode, and the live path
-is untouched at 89.9 %. `hand-18` costs 2.5 raw points on the short text — the price of the
-freeze, accepted against a 5-point mean improvement and a halved worst case. The live path is
+is untouched. `hand-18` costs 2.5 raw points on the short text — the price of the freeze,
+accepted against a 5-point mean improvement and a halved worst case. The live path is
 deliberately excluded: there the Kalman is the only unit estimate after bootstrap, and
 `freezeDecodeUnit` defaults off.
+
+---
+
+## D-20 — Live processing runs on an absolute sample grid, not per chunk
+
+`LiveDecoderEngine.feed()` let the caller's buffer size leak into the transcript (N-2). Two
+mechanisms: while unlocked the frame grid was reset to the chunk boundary (`nextFrameStart =
+totalSamples`), and the sweep loop was evaluated off `nowMs()` only after the whole chunk had
+landed, with `findPeaks` reading the FFT window ending at the write head. So both the framing
+phase and the acquisition instant — and therefore the acquisition audio — were functions of
+where chunk boundaries happened to fall. `hand-13-rough` read 70.9 % at 512-sample chunks and
+89.9 % at 4096.
+
+### The change
+
+`feed()` now advances a processing cursor `curSample` through the newly-arrived samples,
+handling frame and sweep **events at their absolute sample positions in order**: a frame
+occupies `[nextFrameStart, nextFrameStart+win)`, a sweep at S analyses the FFT window ending
+exactly at S, and a sweep that locks mid-chunk starts the frame grid at its own position. The
+clock (`nowMs()`), the peak search, and the keying probe all read from `curSample` rather than
+the write head, so every event sees the same audio regardless of how the stream was sliced.
+The transcript is now a pure function of the samples — asserted directly by
+`LiveEngineTest."decode is invariant to feed chunk size"`, which decodes a clean and a rough
+fixture at 512/1024/2048/4096/8192 and requires byte-identical output.
+
+### Measured — and it was not neutral
+
+The plan filed step 2 as "no CER improvement, just removes a harness artefact." But
+`DecoderBench` had been feeding 4096, which for several scenarios was the *worst* chunk, so
+pinning the behaviour to the fine-grained truth moved the live numbers:
+
+| scenario | before (4096) | after (invariant) |
+|---|---|---|
+| **live mean** | **14.9 %** | **12.7 %** |
+| `hand-13-rough` | 89.9 % | **69.6 %** |
+| `noise-20@-5` | 43.0 % | **1.3 %** |
+| `farnsworth` | 17.7 % | 13.9 % |
+| `hesitation` | 13.9 % | **43.0 %** |
+
+`hesitation` is the one that looks like a regression and is not: the old code already read
+41.8 % at 2048, so 43 % is the honest value and the 13.9 % at 4096 was the fluke. A chunk
+sweep on both the old and new code confirmed it — old spread 12.7–41.8 %, new spread **0.0**.
+The lesson is the mirror of N-4: a number can be an artefact of the *buffer size* as easily as
+of the *bench*, and until this commit nothing pinned it.
+
+### Two recovery tests recalibrated, and a known-failure re-pointed
+
+Two `SessionSequenceTest` noise-recovery cases were tuned to the 4096 artefact and moved:
+
+- `a transmission starting after 20 s of room noise` regressed to 61.9 % whole / 19.4 % tail.
+  The lock still recovers off the speech, but lands ~80 Hz low — which is D-10 — and that
+  offset now damages the whole decode for this seed rather than only its head. The bars were
+  loosened to the honest values and cross-referenced to D-10, not to a chunk that flattered it.
+- `the tone readout re-centres after recovering from a noise lock` (`@KnownFailure("D-10")`)
+  started *passing*, because the deterministic acquisition happens to land seed 53 on the
+  tone. That is not a fix — the re-centring mechanism is untouched, and a seed sweep showed
+  the offset persists on seven of nine seeds (~92–98 Hz). The test was re-pointed to seed 43,
+  which still exhibits it. **D-10 stays open** (`known-issues` D-10).
+
+### What this did not do
+
+The file path is unaffected (two-pass, no streaming warmup). The live path's honest
+`hand-13-rough` is now 69.6 %, still not a decode — that is step 3's (re-bootstrap) job, and
+this commit gives it a baseline that no longer depends on the buffer size. `hesitation` at
+43 % is a real, newly-visible weakness that the 4096 fluke had been hiding.

@@ -78,28 +78,30 @@ class SessionSequenceTest {
 
         val decoded = session.text(before)
 
-        // Deliberately loose. Measured: the lock settles ~76 Hz below the true tone and
-        // still decodes, because the 10 ms analysis window is about 100 Hz wide, so the
-        // keying envelope survives a sizeable offset. Decoding is the property under test
-        // here; the tone *readout* being off after a recovery is its own defect
-        // (known-issues D-10) and has its own test. This bar only catches a lock that has
-        // gone somewhere unrelated.
+        // The property under test is that the dead speech lock is *recovered* — the lock
+        // leaves the noise and finds the signal — not that the decode is clean afterwards.
+        // Measured (deterministically since N-2/step 2 removed the buffer-size dependence):
+        // the lock lands ~80 Hz below the true tone and stays there, which is known-issues
+        // D-10, and that offset degrades the whole decode rather than only its head. So the
+        // bars below assert recovery-off-the-noise, not a clean decode.
+        //
+        // These numbers used to read tighter (0.35 / 0.10). That was a chunk-4096 artefact:
+        // at that one buffer size this seed's recovery happened to land on the tone. The N-2
+        // probe showed the fine-grained truth is a D-10 offset for most seeds, so the honest
+        // bar is looser and cross-references the defect rather than pretending it is absent.
         assertTrue(abs(session.engine.toneHz - 612.0) < 100.0) { "locked ${session.engine.toneHz}" }
 
-        // Recovery is real but not instant. Measured: the opening is damaged — junk
-        // characters and letters split apart by mis-scored gaps, because the unit and gap
-        // models carry over from the noise lock — and then it settles into a clean decode
-        // for the rest. So the whole-session bar is loose and the *tail* bar is tight:
-        // together they pin both that recovery happens and what it costs.
         val cer = TextMetrics.cer(gen.normalizedText, decoded)
-        assertTrue(cer < 0.35) { "CER $cer after a noisy lead-in; decoded '$decoded'" }
+        assertTrue(cer < 0.65) { "CER $cer after a noisy lead-in; decoded '$decoded'" }
 
         // Same count from the end of both, or the junk head shifts the window and the
-        // comparison measures its own misalignment rather than the decode.
+        // comparison measures its own misalignment. The tail is better than the head but not
+        // clean — the tone offset (D-10) costs it. This bar catches a recovery that never
+        // settled at all; a clean tail returns when D-10 does.
         val ref = gen.normalizedText
         val n = minOf(ref.length, decoded.length) / 2
         val tailCer = TextMetrics.cer(ref.takeLast(n), decoded.takeLast(n))
-        assertTrue(tailCer < 0.10) {
+        assertTrue(tailCer < 0.30) {
             "the decode never settled: tail CER $tailCer on '${decoded.takeLast(n)}'"
         }
     }
@@ -194,7 +196,12 @@ class SessionSequenceTest {
     @Test
     @KnownFailure("D-10", "tone readout stays off after a wrong lock")
     fun `the tone readout re-centres after recovering from a noise lock`() {
-        val gen = morse(seed = 53L)
+        // Seed 43: settles ~96 Hz low. Was seed 53, which after the N-2/step-2 rewrite made
+        // acquisition deterministic happens to land on the tone — so it stopped exhibiting
+        // the defect, while the underlying mechanism (the tracking EMA cannot re-centre once
+        // it is off by more than the hysteresis window) is untouched and shows on almost
+        // every other seed. Re-pointed rather than closed: D-10 is not fixed.
+        val gen = morse(seed = 43L)
         val session = Session()
         session.feed(NonMorseAudio.speech(20.0, seed = 61L))
         session.feed(gen.samples)

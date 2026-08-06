@@ -29,28 +29,33 @@ error. Four things are true at the same time:
   `qsb-impulse` recovering from a decline to 45.6 % as a second, unplanned win. The file mean
   is **6.6 %**. The floor 6a measured with every stage handed the truth is 32.9 %, so there
   is little left on this path without a better lattice.
-- **A rough hand-sent fist is still not solved on the live path**, which decodes it at
-  65.9 %. D-19 was file-path only; the live path (step 3) now carries the remaining D-6 work.
+- **A rough hand-sent fist is still not solved on the live path.** Step 2 (D-20) took its
+  `DecoderBench` figure from 89.9 % to **69.6 %** by making the decode chunk-invariant, but
+  that is honest fine-grained inaccuracy, not a decode. The live path (step 3) carries the
+  remaining D-6 work.
 - **Nothing has ever run on a phone.** Every result is from unit tests.
 
 | | first commit | now | source |
 |---|---|---|---|
-| Live path, mean CER | 89.7 % | **13.1 %** | `version-history.md`, D-17 |
-| Live path, worst scenario | 227 % | **65.9 %** | `version-history.md`, D-17 |
+| Live path, mean CER | 89.7 % | **12.7 %** | `DecoderBench`, D-20 |
+| Live path, `hand-13-rough` | 227 % | **69.6 %** | `DecoderBench`, D-20 |
 | File path, mean CER | 21.8 % | **6.6 %** | `DecoderBench`, D-19 |
-| File path, worst scenario `hand-13-rough` | — | **36.7 %** | `DecoderBench`, D-19 |
+| File path, `hand-13-rough` | — | **36.7 %** | `DecoderBench`, D-19 |
 | Non-Morse fixtures emitting nothing | 1 of 5 | 3 of 5 | `version-history.md` |
 
-**Quote the instrument with the number, always.** `DecoderBench` and `HistoryBench` use
-different text lengths and disagree on `hand-13-rough` (D-18 found this; D-19 saw it again on
-`hand-18`, three text lengths giving three verdicts). The file mean above is `DecoderBench`;
-`HistoryBench`'s ruler reads differently. See lesson 6 below and the caveat in
-`version-history.md`.
+**Quote the instrument with the number, always.** The live rows above are `DecoderBench`,
+re-measured after step 2 made the path chunk-invariant. The `HistoryBench` figures this file
+used to headline (live mean 13.1 %, worst 65.9 %) **predate step 2 and would move if
+re-run** — `HistoryBench` is not in the repo, so they cannot be, which is itself *Decisions
+needed* 6. `DecoderBench` and `HistoryBench` also use different text lengths and disagree on
+`hand-13-rough` (D-18 found this; D-19 saw it again on `hand-18`). See lesson 6 and the
+caveat in `version-history.md`.
 
 The live mean improved 7×. The file mean is down to a third of the first commit. The recent
-worst-case wins came from **removing machinery that was doing harm** — D-17 discarded an
-outlier seed, D-18 retired an inverted veto, and D-19 stopped pass 2 re-opening the unit pass
-1 had locked. None of the three added a model; each deleted an assumption.
+worst-case wins came from **removing machinery — or artefacts — that were doing harm**: D-17
+discarded an outlier seed, D-18 retired an inverted veto, D-19 stopped pass 2 re-opening the
+unit pass 1 had locked, and D-20 stopped the transcript depending on the caller's buffer
+size. None added a model; each deleted an assumption.
 
 ---
 
@@ -75,7 +80,8 @@ omitted; the rest are below, including the three that changed no decoder behavio
 | 12 | `d08fadb` | 08-04 | D-18 file gate | 13.1 % (file path only) |
 | 13 | `5956a7e` | 08-05 | 6a residual | — (diagnostic only) |
 | 14 | `5212505` | 08-05 | 6b unblocked | — (docs only) |
-| 15 | *(this commit)* | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
+| 15 | `d0d2082` | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
+| 16 | *(this commit)* | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
 
 ### 1 · `ad5479d` — init
 
@@ -306,6 +312,27 @@ superseded); `hand-18` **8.9 → 11.4 %** (the cost). File mean **11.6 → 6.6 %
 **byte-identical**, AC-3/AC-4/AC-6 green, same nine known failures. `known-issues` D-6 stays
 open — 36.7 % is a third right, and the floor for this fixture is 32.9 %.
 
+### 16 · *(this commit)* — D-20: the transcript stops depending on the buffer size (step 2)
+
+**Problem.** N-2: `feed()` reset the frame grid to the chunk boundary and evaluated the sweep
+loop off post-chunk `nowMs()`, so acquisition timing, the framing phase, and thus the whole
+transcript were functions of the caller's buffer size.
+
+**What changed.** `feed()` now processes frames and sweeps as events at absolute sample
+positions, each reading the window that ends at its own position, driven by a `curSample`
+processing cursor rather than the write head. The decode is now a pure function of the sample
+stream — asserted by a test that decodes two fixtures at 512…8192 and requires identical
+transcripts.
+
+**Measured.** Not the neutral cleanup the plan predicted. `DecoderBench` fed 4096, often the
+*worst* chunk, so the honest deterministic numbers are mostly better: live mean **14.9 →
+12.7 %**, `hand-13-rough` **89.9 → 69.6 %** (helps D-6's live figure), `noise-20@-5` **43.0 →
+1.3 %**. `hesitation` went **13.9 → 43.0 %** — but it was already 41.8 % at 2048, so 43 % is
+the truth the 4096 fluke hid, not a regression. Two `SessionSequenceTest` noise-recovery
+tests were recalibrated off the artefact; one surfaced that D-10's tone offset is common
+across seeds, not rare, so its known-failure was re-pointed off a seed that now coincidentally
+re-centres. `decisions.md` D-20.
+
 ---
 
 ## What the measurements taught us
@@ -368,7 +395,7 @@ is stated and labelled with what it rests on.
 | `known-issues` D-10 | Medium | Tone readout stays ~76 Hz off after recovering from a wrong lock | — none planned |
 | `known-issues` D-3 | Low | Mains veto costs tone-readout accuracy (~20 Hz), not decoding | — accepted |
 | ~~**N-1**~~ | FIXED | Bootstrap seed had no outlier protection — closed by `decisions.md` D-17 | 1 |
-| **N-2** | High | The decode depends on the caller's audio buffer size — see below | 2 |
+| ~~**N-2**~~ | FIXED | The decode depended on the caller's audio buffer size — closed by `decisions.md` D-20 (step 2) | 2 |
 | ~~**N-3**~~ | FIXED | File path declined a fit it could decode, on an inverted score — closed by `decisions.md` D-18 | 1b |
 | **N-4** (new) | Medium | `DecoderBench` and `HistoryBench` disagreed about `hand-13-rough`; nothing compared them — see lesson 6 | — undecided, see *Decisions needed* 6 |
 | `G-1` | High risk | No real recordings in the test corpus | 7 (blocked) |
@@ -415,7 +442,24 @@ This is the mechanism behind `known-issues` D-6 and D-2, and the direct cause of
 symptom. It answers the question D-6 left open — the seed is splitting on **neither** a
 dot/dash boundary **nor** the interior of the dot cluster, but on a single outlier.
 
-### N-2 — The decode depends on the caller's buffer size
+### N-2 — The decode depends on the caller's buffer size · FIXED by step 2
+
+**Closed by the sample-position rewrite (`decisions.md` D-20).** `feed()` now processes
+frames and sweeps as events at absolute sample positions, each reading the window that ends
+at its own position, so the transcript is a pure function of the sample stream. The
+invariance is asserted: `LiveEngineTest."decode is invariant to feed chunk size"` decodes two
+fixtures at 512/1024/2048/4096/8192 and requires byte-identical transcripts. The evidence
+below is kept for the record.
+
+The fix was **not** the neutral cleanup this plan predicted. `DecoderBench` had been feeding
+4096 — often, but not always, the *worst* chunk — so removing the dependence moved the live
+numbers, and mostly for the better: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 →
+69.6 %** (the honest fine-grained value, which also improves `known-issues` D-6's live
+figure), `noise-20@-5` **43.0 → 1.3 %**. Two scenarios went the other way and were exposed
+rather than caused: `hesitation` **13.9 → 43.0 %** was already 41.8 % at 2048 — the 13.9 % at
+4096 was the fluke — and two `SessionSequenceTest` noise-recovery cases had their bars
+recalibrated off the artefact (one of them surfaced that D-10's tone offset is seed-common,
+not seed-rare). Full account in `decisions.md` D-20.
 
 Found while validating N-1. Same audio, same build, same config; only the length of the
 slices handed to `feed()` changes. On `hand-13-rough`, re-measured 2026-08-04 with
@@ -566,22 +610,22 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Four of thirteen are done, one is closed unstarted.** Of the eight still open, **four are
-ready** to start today (2, 4a, 3, 4) and **four are blocked** — three on an owner decision
-rather than on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at
-the foot of this file.
+**Five of thirteen are done, one is closed unstarted.** Of the seven still open, **three are
+ready** to start today (4a, 3, 4) and **four are blocked** — three on an owner decision rather
+than on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at the foot
+of this file.
 
-**6b is done** (`decisions.md` D-19): file `hand-13-rough` 64.6 → 36.7 %, `qsb-impulse`
-declines → 45.6 %, file mean 11.6 → 6.6 %, live path byte-identical. It took two measurements
-that both refuted the plan's stated approach — the `unitMsLocal` track fails AC-6 at 42 %, and
-the freeze had to be gated to raw mode to keep AC-4. With the file path now at its 32.9 %
-floor, **the live path (step 3) carries the remaining D-6 work.**
+**Step 2 is done** (`decisions.md` D-20) and was not the neutral cleanup the plan called it:
+making the decode chunk-invariant moved the live numbers off the 4096 artefact, mostly for
+the better (live mean 14.9 → 12.7 %, `hand-13-rough` 89.9 → 69.6 %). **Step 3 is next** — the
+live re-bootstrap that carries the remaining D-6 work — and its ceiling is now the file path's
+36.7 %, with the live baseline it must beat freshly and honestly measured at 69.6 %.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
-| 2 | Decouple the decode from buffer size | ready | small | No CER improvement expected at all. Removes a **19-point** spread on `hand-13-rough` that is an artefact of the harness, so later live-path comparisons mean something. `clean-20` should stop moving 2.5 % ↔ 6.3 % with chunk size, and the seeded unit stop varying 53–68 ms. **Weaker than it looks:** D-17 already took this from 67 points to 19 without touching the cause | measured (N-2, re-run 08-04) |
+| 2 | Decouple the decode from buffer size | **done** · this commit (D-20) | small | **Not neutral after all.** Absolute-sample-grid processing; transcripts now byte-identical across 512…8192. `DecoderBench` fed the worst chunk, so the honest numbers improved: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 → 69.6 %**, `noise-20@-5` **43.0 → 1.3 %**. Exposed `hesitation`'s true 43 % (was a 4096 fluke at 13.9 %) and re-pointed a D-10 known-failure | measured (D-20) |
 | 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
 | 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
@@ -662,22 +706,27 @@ Three things this did not do: the live path is untouched, `known-issues` D-6 sta
 64.6 % file / 89.9 % live, and D-8 is no closer — the impostors above were never caught by
 this gate and still are not.
 
-### Step 2 — Decouple the decode from the buffer size · small · fixes N-2
+### Step 2 — Decouple the decode from the buffer size · **DONE** · `decisions.md` D-20
 
-Frame the envelope on an absolute sample grid rather than resetting to the chunk boundary,
-and drive the sweep clock off frame positions rather than post-chunk `nowMs()`. Then assert
-it: decode one fixture at 512/1024/2048/4096/8192 and require the transcripts to match.
+`feed()` processes frames and sweeps as events at absolute sample positions, each reading the
+window ending at its own position, driven by a `curSample` cursor. The transcript is now a
+pure function of the sample stream — `LiveEngineTest."decode is invariant to feed chunk size"`
+decodes two fixtures at 512…8192 and requires them byte-identical. The measured consequence
+(the live path shifted off the 4096 artefact, mostly better) and the two recalibrated
+recovery tests are in D-20. Done before step 3 precisely so step 3's before/after means
+something.
 
-This is worth doing before any further tuning, because until it is done every bench number
-carries an unknown component that is an artefact of the harness rather than the decoder.
-
-### Step 3 — Re-bootstrap rather than commit once · medium · `known-issues` D-2
+### Step 3 — Re-bootstrap rather than commit once · **NEXT** · medium · `known-issues` D-2
 
 Steps 1 and 2 make a bad start less likely; they do not make it recoverable. A periodic
 batch re-fit over a recent window, adopted when it disagrees materially with the tracked
 unit, would recover from a bad start without abandoning the streaming architecture. This is
 also `known-issues` D-1's third candidate direction — a large streaming-vs-batch
 disagreement is itself the degraded-state signal the system currently lacks.
+
+Its baseline is now honest and its ceiling has moved: on `hand-13-rough` the live path is
+**69.6 %** (D-20, chunk-invariant) and the file path's two-pass result on the same audio is
+**36.7 %** (D-19), so that is the bound re-bootstrap is chasing.
 
 ### Step 4a — Restore a reproducer for D-1 · small · **new, and it should come first**
 

@@ -297,7 +297,14 @@ class LiveDecoderEngine(
     var spectrum: FloatArray = FloatArray(0); private set
     val spectrumBins = 64
 
-    fun nowMs(): Double = totalSamples * 1000.0 / sampleRate
+    /**
+     * The processing clock, driven by [curSample] — the sample position of the event being
+     * processed, not the write head. This is what makes the decode a pure function of the
+     * sample stream rather than of the caller's buffer size (N-2): a sweep at sample P
+     * timestamps at P whether P arrived alone or in the middle of a large chunk. Between
+     * feeds [curSample] equals [totalSamples], so external readers see the current time.
+     */
+    fun nowMs(): Double = curSample * 1000.0 / sampleRate
 
     // ---- internals ----
     private val maxWin = (cfg.windowMaxMs * sampleRate / 1000.0).toInt()
@@ -305,9 +312,14 @@ class LiveDecoderEngine(
     private val hop = (cfg.hopMs * sampleRate / 1000.0).toInt()
     private val ringSize = 16_384
     private val ring = FloatArray(ringSize)
+    /** Write head: total samples ever received. */
     private var totalSamples = 0L
+    /** Processing cursor: the position of the frame or sweep currently being handled. */
+    private var curSample = 0L
     private var nextFrameStart = 0L
-    private var nextSweepMs = 0.0
+    private val sweepIntervalSamples = max(1, (cfg.sweepIntervalMs * sampleRate / 1000.0).toInt())
+    /** Absolute sample position of the next sweep — fixed on the stream, not on chunks. */
+    private var nextSweepSample = sweepIntervalSamples.toLong()
     private val frameScratch = FloatArray(maxWin)   // sized for the widest window FR-2.7 allows
 
     private var goertzel: Goertzel? = null
@@ -362,18 +374,39 @@ class LiveDecoderEngine(
         }
         totalSamples += count
 
-        if (lockState == LockState.LOCKED || lockState == LockState.DEGRADED) {
-            while (nextFrameStart + win <= totalSamples) {
+        // Process frame and sweep events in sample-position order, each reading the window
+        // that ends at its own position, so the transcript is a pure function of the sample
+        // stream and not of how it was split into feed() calls (N-2). A frame occupies
+        // [nextFrameStart, nextFrameStart+win); a sweep at S analyses the FFT window ending
+        // at S. Frames only exist once locked, so before a lock only sweeps fire — and a
+        // sweep that locks mid-chunk starts the frame grid at its own position, so the rest
+        // of the chunk frames from there.
+        while (true) {
+            val framePos = if (lockState == LockState.LOCKED || lockState == LockState.DEGRADED)
+                nextFrameStart + win else Long.MAX_VALUE
+            val sweepPos = nextSweepSample
+            val next = minOf(framePos, sweepPos)
+            if (next > totalSamples) break
+            if (framePos <= sweepPos) {
+                curSample = framePos
                 processFrame(nextFrameStart)
                 nextFrameStart += hop
+            } else {
+                curSample = sweepPos
+                // Skip only if the window is not (yet) available: before fftSize samples, or
+                // beyond the ring on a pathologically large chunk. Neither occurs for real
+                // AudioRecord buffers or the bench.
+                if (sweepPos >= cfg.fftSize && sweepPos - cfg.fftSize >= totalSamples - ringSize) {
+                    sweep()
+                }
+                nextSweepSample += sweepIntervalSamples
             }
-        } else {
-            nextFrameStart = totalSamples // no envelope until a lock exists
         }
-
-        while (nowMs() >= nextSweepMs) {
-            if (totalSamples >= cfg.fftSize) sweep()
-            nextSweepMs += cfg.sweepIntervalMs
+        curSample = totalSamples
+        // No envelope until a lock exists: keep the frame grid at the write head so a lock
+        // begins framing from the lock instant (set precisely in resetSignalPath).
+        if (lockState != LockState.LOCKED && lockState != LockState.DEGRADED) {
+            nextFrameStart = totalSamples
         }
     }
 
@@ -819,7 +852,7 @@ class LiveDecoderEngine(
         val n = cfg.fftSize
         val re = DoubleArray(n)
         val im = DoubleArray(n)
-        val start = totalSamples - n
+        val start = curSample - n // window ends at the event position, not the chunk head (N-2)
         for (i in 0 until n) {
             val w = 0.5 * (1.0 - cos(2.0 * PI * i / (n - 1)))
             re[i] = ring[((start + i) % ringSize).toInt()] * w
@@ -868,10 +901,14 @@ class LiveDecoderEngine(
         return keyingSpreadAt(freqHz) >= cfg.lockKeyingSpread
     }
 
-    /** Envelope spread at [freqHz] over the most recent audio; 0.0 when too little exists. */
+    /**
+     * Envelope spread at [freqHz] over the audio ending at the current processing position;
+     * 0.0 when too little exists. Anchored to [curSample] so a sweep's keying test reads the
+     * same window it found the peak in, regardless of chunking (N-2).
+     */
     fun keyingSpreadAt(freqHz: Double): Double {
-        if (totalSamples < probeSamples) return 0.0
-        val start = totalSamples - probeSamples
+        if (curSample < probeSamples) return 0.0
+        val start = curSample - probeSamples
         for (i in 0 until probeSamples) {
             probeScratch[i] = ring[((start + i) % ringSize).toInt()]
         }
@@ -987,8 +1024,10 @@ class LiveDecoderEngine(
         envelopeNorm = 0f
         pendingRuns.clear()
         keyState = false
-        runStartSample = totalSamples
-        nextFrameStart = totalSamples
+        // Anchor the run and frame grids to the processing position (the lock instant when a
+        // sweep locks), not the write head, so the envelope framing is chunk-invariant (N-2).
+        runStartSample = curSample
+        nextFrameStart = curSample
         if (lowSignal) {
             lowSignal = false
             events.add(Event.LowSignal(false, nowMs()))
