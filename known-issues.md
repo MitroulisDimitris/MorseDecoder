@@ -40,15 +40,16 @@ perfectly — halve the unit and true dots read as 2 units, dashes as 6, still t
 clusters at 3:1. The model fits its own measurements beautifully; the measurements are
 just referred to the wrong unit.
 
-**Reproducible synthetically** — no longer only visible on the one real clip. Two bench
-scenarios (`BENCH=1 gradlew :core:test --tests "*DecoderBench*" -i`) exhibit it:
+**It used to arise on its own**, on two bench scenarios (`BENCH=1 gradlew :core:test
+--tests "*DecoderBench*" -i`) — **both since closed**, which is how the reproducer came to
+be lost:
 
-| Scenario | Path | True speed | Reported | Chars vs ref | CER | Gate |
-|---|---|---|---|---|---|---|
-| `hand-13-rough` | live | 13 WPM | **53 WPM** | 145 vs 62 | 251 % | never engaged |
-| `qsb-impulse` | file | 18 WPM | **60 WPM** (clamped) | 121 vs 62 | 168 % | n/a |
+| Scenario | Path | True speed | Reported | Chars vs ref | CER | Gate | Since |
+|---|---|---|---|---|---|---|---|
+| `hand-13-rough` | live | 13 WPM | **53 WPM** | 145 vs 62 | 251 % | never engaged | 15.1 WPM (D-17, D-21) |
+| `qsb-impulse` | file | 18 WPM | **60 WPM** (clamped) | 121 vs 62 | 168 % | n/a | 19.2 WPM (D-19) |
 
-The bench's starkest result is negative space: **`outputSuppressed` was false in all 16
+The bench's starkest result was negative space: **`outputSuppressed` was false in all 16
 scenarios**, including those two. The output gate is inert against scale error across the
 entire matrix, which is what makes this a capability gap rather than a tuning problem.
 
@@ -57,24 +58,67 @@ consequence D-8 does not record: **an octave-type unit error is invisible to eve
 quality signal in the system.** The output gate keys off `fitQuality`, so it cannot
 suppress this; the UI shows `fit 1.00`; nothing warns.
 
-**Its only reproducer is gone, and the gap is not.** D-17 removed the seed error that
-produced the 4× scale error, so no scenario in the synthetic matrix now exhibits one — the
-live path reports 21.5 WPM on `hand-13-rough` and plausible speeds everywhere else, and a
-probe over dash-heavy and dot-heavy openings could not construct a replacement. The
-`@KnownFailure("D-1")` test therefore passes and its annotation has been removed; it now
-guards D-17 instead.
+**The reproducer was lost, and has been restored** (step 4a). D-17 removed the seed error
+that produced the 4× scale error, so no scenario in the synthetic matrix bootstraps one any
+more — the live path reports 21.5 WPM on `hand-13-rough` and plausible speeds everywhere
+else, and a probe over dash-heavy and dot-heavy openings could not construct a replacement.
+The old `@KnownFailure("D-1")` test therefore started passing **without anything having been
+fixed**; its annotation was removed and it now guards D-17 instead.
 
-Nothing about the capability changed. What remains as evidence:
+The replacement injects the wrong unit directly, through **FR-9.5's WPM pin** — the only
+supported way to hand the decoder a unit known to be wrong. A clean 20 WPM signal (612 Hz,
++10 dB, the fixture the rest of `HonestFailureTest` uses) decoded against a unit pinned at
+40 WPM:
+
+| | pinned 40 WPM | true 20 WPM, unpinned |
+|---|---|---|
+| characters emitted (62 sent) | **202** | 61 |
+| CER | **297.5 %** | 2.5 % |
+| transcript is `E`/`T`/`I`/`M` | **98.5 %** | 21 % |
+| `fitQuality` | **1.00** | 1.00 |
+| `outputSuppressed` | **false** | false |
+| `lockState` | **LOCKED** | LOCKED |
+
+`TA C Q TEE E EEE EEET ETTTT ET TEEE TETE TET T EEEE` at maximum reported confidence. The
+observation window is full — 64 fit samples at `p10 = p50 = 1.00`, against the real
+recording's `p10 = 0.91, p50 = 1.00`, so the synthetic reproducer is if anything a *cleaner*
+instance of the defect than the clip that first showed it.
+
+Two tests hold it, deliberately separated (`HonestFailureTest`):
+
+- `a unit pinned an octave out does not reproduce the text` — passes, and guards the
+  **premise**. The last reproducer evaporated silently when the input that triggered it was
+  removed; this one asserts CER > 0.5, which survives any legitimate fix (a decoder that
+  suppressed the output would score 100 %) and fails loudly if the scale error stops
+  happening.
+- `a decode built on a wrong unit does not report perfect confidence` —
+  `@KnownFailure("D-1")`, and asserts the **defect**: either the gate fires or `fitQuality`
+  drops to at least its own suppression threshold (`emitFitSuppressBelow`, 0.35).
+
+**The pin is the vehicle, not the defect.** `ObservationFit` scores 2-means clusters over
+*normalised* durations `ln(duration / unit)`, and `fitQuality` is separation × ratio ×
+tightness over those clusters — every term is invariant to the unit, so a uniform `ln 2`
+shift changes none of them. Where the wrong unit came from is irrelevant to whether anything
+can see it.
+
+The pin also disables D-21's periodic re-fit (FR-9.5 owns the unit while pinned), so the one
+signal that might have caught this — a streaming-vs-batch disagreement, the third candidate
+direction below — is not computed at all in this state. That is a real gap in its own right.
+
+The direction of the error matters, and the asymmetry is worth recording. Pinned *slow* the
+decoder largely recovers (10 WPM against a true 20: CER 15.2 %; 13.3 WPM: 2.5 %, identical
+to unpinned) because the lattice's per-character shrinkage absorbs it. Pinned *fast* it
+shatters (30 WPM: 38.0 %; 40: 297.5 %; 53: 310.1 %) — a short unit reads every dash as a run
+of dots. Only the extreme slow end trips anything: at 6.7 WPM the fit collapses to 0.02 and
+the gate suppresses correctly, which is the gate working on a *shape* error, not a scale one.
+
+What remains as further evidence:
 
 - the real recording, which still reads 30.6 WPM against a true 17.7 on the live path —
   uncommitted, so blocked on **G-1**;
 - `fitQuality` reporting **1.00 on decodes measured at 13–23 % CER** (dash-heavy and
   dot-heavy openings, +10 dB, 13 and 20 WPM). Confidence is still uncorrelated with
   correctness even where the unit is roughly right.
-
-A defect with no reproducer is one nobody will notice regressing. Restoring one — from the
-real corpus, or by injecting a known-wrong unit directly — should come before any further
-work that assumes scale errors are visible.
 
 Candidate directions, none yet chosen:
 

@@ -107,6 +107,84 @@ class HonestFailureTest {
     }
 
     /**
+     * D-1's reproducer, restored (step 4a). A clean 20 WPM signal decoded against a unit
+     * pinned at 40 WPM — the octave-type scale error the defect is about.
+     *
+     * The pin (FR-9.5) is the *vehicle*, not the defect. It is the only supported way to
+     * hand the decoder a unit known to be wrong, now that D-17 has stopped the bootstrap
+     * producing one on any synthetic fixture; the real recording still bootstraps its own,
+     * reading 30.6 WPM against a true 17.7, and is uncommitted (G-1). What the pin buys is
+     * a scale error that can be *constructed on demand* rather than waited for.
+     *
+     * This test guards the reproducer itself. The previous one evaporated silently — D-17
+     * removed the input that triggered it and the test went green without anything having
+     * been fixed — so the premise is asserted separately from the defect. It holds under
+     * any legitimate fix: a decoder that suppressed this output would score 100 % here, a
+     * decoder that decoded it correctly would score near zero and this would fail loudly.
+     */
+    @Test
+    fun `a unit pinned an octave out does not reproduce the text`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val engine = LiveDecoderEngine()
+        engine.pinWpm(40.0)          // true speed is 20
+        feed(engine, gen.samples)
+        val cer = TextMetrics.cer(gen.normalizedText, decoded(engine))
+        assertTrue(cer > 0.5) {
+            "a 2x unit error decoded at CER $cer — the scale-error reproducer has gone, " +
+                "and D-1 has nothing holding it again"
+        }
+    }
+
+    /**
+     * The defect itself: **nothing in the system can see a scale error.**
+     *
+     * Against the fixture above the decoder emits 202 characters for 62 sent at 297 % CER,
+     * 98.5 % of them `E`/`T`/`I`/`M`, and reports `fit 1.00` over a full observation window
+     * with `outputSuppressed` false and the lock state LOCKED. The UI shows maximum
+     * confidence beside `TA C Q TEE E EEE EEET ETTTT ET TEEE TETE TET T EEEE`.
+     *
+     * The cause is structural rather than a bad threshold, which is why no tuning closes
+     * it. `ObservationFit` scores 2-means clusters over *normalised* durations
+     * `ln(duration / unit)`, and `fitQuality` is separation x ratio x tightness over those
+     * clusters — every term is invariant to the unit. Halving the unit shifts every z by
+     * `ln 2` and leaves all three untouched. The model fits its own measurements perfectly;
+     * the measurements are referred to the wrong unit.
+     *
+     * The bar is the gate's own suppression threshold: either the gate fires, or the score
+     * is at least low enough that it would. Today neither is remotely true.
+     *
+     * Note the pin also disables D-21's periodic re-fit (FR-9.5 owns the unit), so the one
+     * signal that *could* have caught this — a streaming-vs-batch disagreement — is not even
+     * computed. That is a genuine gap, not an artefact of the reproducer.
+     */
+    @Test
+    @KnownFailure("D-1", "a 2x unit error scores fit 1.00 with nothing suppressed")
+    fun `a decode built on a wrong unit does not report perfect confidence`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val engine = LiveDecoderEngine()
+        engine.pinWpm(40.0)
+        feed(engine, gen.samples)
+
+        val out = decoded(engine)
+        val letters = out.filter { it != ' ' }
+        val singles = letters.count { it in "ETIM" }.toDouble() / maxOf(1, letters.length)
+        val noticed = engine.outputSuppressed ||
+            (engine.fitQuality ?: 1.0) <= engine.gateSuppressBelow
+        assertTrue(noticed) {
+            "emitted ${engine.transcript.size} characters for " +
+                "${gen.normalizedText.count { it != ' ' }} sent at CER " +
+                "${"%.3f".format(TextMetrics.cer(gen.normalizedText, out))}, " +
+                "${"%.0f".format(100 * singles)} % of them E/T/I/M, and reported fit " +
+                "${engine.fitQuality?.let { "%.2f".format(it) }} with outputSuppressed " +
+                "${engine.outputSuppressed} in state ${engine.lockState}"
+        }
+    }
+
+    /**
      * Below the calibrated SNR floor, accuracy targets are explicitly void — being *wrong*
      * is allowed. Being confidently verbose is not: P-4 asks for a decoder that declines
      * rather than one that produces plausible-looking output from unusable input.

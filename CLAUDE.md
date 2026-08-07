@@ -72,7 +72,7 @@ isn't the app that was specified. Each traces to a principle in §1 of the requi
 ## Testing
 
 ```sh
-./gradlew :core:test                                             # full suite, ~106 tests
+./gradlew :core:test                                             # full suite, ~115 tests
 BENCH=1 ./gradlew :core:test --tests "*DecoderBench*" -i         # scenario matrix + ablations
 BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats (the D-8 question)
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees

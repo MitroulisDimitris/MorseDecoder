@@ -17,9 +17,9 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ---
 
-## Where we are — 2026-08-06
+## Where we are — 2026-08-07
 
-Sixteen commits over nine days. Both decode paths exist and work, the app builds, and the
+Eighteen commits over ten days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
@@ -62,8 +62,8 @@ size. None added a model; each deleted an assumption.
 
 ## The commits
 
-Sixteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
-omitted; the rest are below, including the three that changed no decoder behaviour.
+Eighteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+omitted; the rest are below, including the four that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
 |---|---|---|---|---|
@@ -83,7 +83,8 @@ omitted; the rest are below, including the three that changed no decoder behavio
 | 14 | `5212505` | 08-05 | 6b unblocked | — (docs only) |
 | 15 | `d0d2082` | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
 | 16 | `efdfb02` | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
-| 17 | *(this commit)* | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
+| 17 | `7ec06c3` | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
+| 18 | *(this commit)* | 08-07 | 4a D-1 reproducer | — (tests only) |
 
 ### 1 · `ad5479d` — init
 
@@ -388,7 +389,7 @@ is stated and labelled with what it rests on.
 
 | ID | Severity | Summary | Addressed by |
 |---|---|---|---|
-| `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **and it now has no reproducer** | 4a, then 4 |
+| `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **reproducer restored by 4a** (a pinned 2× unit: 297.5 % CER at `fit 1.00`), so it is held by a failing test again | 4 |
 | `known-issues` D-2 | High | Live path decodes real hand-sent audio worse than file import — **narrowed** by D-21's re-bootstrap (speed corrected, CER 69.6 → 65.8 %), not closed: the gap needs the D-19 freeze, which cannot transfer to live | 3 (done) |
 | `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
 | ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
@@ -612,24 +613,24 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Six of thirteen are done, one is closed unstarted.** Of the six still open, **two are
-ready** to start today (4a, 4) and **four are blocked** — three on an owner decision rather
-than on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at the foot
-of this file.
+**Seven of thirteen are done, one is closed unstarted.** Of the five still open, **one is
+ready** to start today (4) and **four are blocked** — three on an owner decision rather than
+on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at the foot of
+this file.
 
-**Step 3 is done** (`decisions.md` D-21) and landed as a *modest* win, not the large one its
-36.7 % ceiling implied: the re-bootstrap fixes the reported speed (`hand-13-rough` 21.9 → 15.1
-WPM, true 13) and takes CER 69.6 → **65.8 %**, live mean 12.7 → **12.3 %**, but the gap to the
-file path stays open because the D-19 freeze that closes it cannot transfer to the live path
-(N-5). Its real test is a recording worse than any synthetic — G-1, still blocked. **4a is
-next** (restore a D-1 reproducer, small), then 4.
+**Step 4a is done** and D-1 is held by a failing test again. The reproducer had to be
+*injected* — no synthetic fixture bootstraps a scale error any more — so it pins the unit an
+octave fast (FR-9.5) on a clean 20 WPM signal and measures what notices: nothing does.
+202 characters for 62 sent, **297.5 % CER**, 98.5 % of it `E`/`T`/`I`/`M`, `fit 1.00` over a
+full window, `outputSuppressed` false, lock LOCKED. **Step 4 is next** — make that state
+visible — and it now has a fixture to be judged against.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
 | 2 | Decouple the decode from buffer size | **done** · this commit (D-20) | small | **Not neutral after all.** Absolute-sample-grid processing; transcripts now byte-identical across 512…8192. `DecoderBench` fed the worst chunk, so the honest numbers improved: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 → 69.6 %**, `noise-20@-5` **43.0 → 1.3 %**. Exposed `hesitation`'s true 43 % (was a 4096 fluke at 13.9 %) and re-pointed a D-10 known-failure | measured (D-20) |
-| 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
+| 4a | Restore a reproducer for D-1 | **done** · this commit | small | **Restored by injection, not by waiting.** A unit pinned an octave fast on a clean 20 WPM signal: 202 chars for 62 sent, CER **297.5 %**, 98.5 % of it `E`/`T`/`I`/`M`, at `fit 1.00` with nothing suppressed and the lock LOCKED. No behaviour change; known failures 9 → 10 across 5 defects | measured |
 | 3 | Re-bootstrap rather than commit once | **done** · this commit (D-21) | medium | **Modest, not the 36.7 % the ceiling implied.** Batch re-fit every 16 marks, adopted in place on a material disagreement. Corrects reported speed (`hand-13-rough` 21.9 → 15.1 WPM) and CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live mean 12.7 → **12.3 %**; fires on nothing healthy. Capped short of the file's 36.7 % because the D-19 freeze cannot transfer to live (N-5) — the tracker resumes chasing bias | measured (D-21) |
 | 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
 | 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
@@ -738,17 +739,42 @@ Also `known-issues` D-1's third candidate direction: a large streaming-vs-batch 
 itself the degraded-state signal the system lacked, and the re-fit now computes it every 16
 marks.
 
-### Step 4a — Restore a reproducer for D-1 · small · **new, and it should come first**
+### Step 4a — Restore a reproducer for D-1 · **DONE** · this commit
 
 D-17 removed the only input that produced a scale error, so `@KnownFailure("D-1")` started
 passing — **not because anything detected the error, but because the error stopped
-happening**. The annotation has been removed and the test now guards D-17. A probe over
-dash-heavy and dot-heavy openings could not construct a replacement.
+happening**. A probe over dash-heavy and dot-heavy openings could not construct a
+replacement, so the reproducer is now *injected* rather than waited for, through FR-9.5's
+WPM pin: a clean 20 WPM signal decoded against a unit pinned at 40.
 
-D-1 is a High defect that now has nothing failing to hold it. Restore one by injecting a
-known-wrong unit directly, or from the real corpus (G-1) — the real recording still reads
-30.6 WPM against a true 17.7. Until then the capability gap is real and unguarded, and
-`fitQuality` still reports **1.00 on decodes measured at 13–23 % CER**.
+| | pinned 40 WPM | unpinned |
+|---|---|---|
+| characters emitted (62 sent) | **202** | 61 |
+| CER | **297.5 %** | 2.5 % |
+| transcript is `E`/`T`/`I`/`M` | **98.5 %** | 21 % |
+| `fitQuality` | **1.00** (64 samples, p10 = p50 = 1.00) | 1.00 |
+| `outputSuppressed` / `lockState` | **false** / LOCKED | false / LOCKED |
+
+No behaviour changed; the known-failure count goes 9 → **10 across 5 defects**. Two tests,
+separated on purpose: one asserts the **premise** (CER > 0.5, so it survives any legitimate
+fix and fails loudly if the scale error stops happening — which is exactly how the last
+reproducer evaporated unnoticed), the other is the `@KnownFailure("D-1")` asserting the
+**defect** (the gate fires, or `fitQuality` falls to at least its own 0.35 suppression
+threshold).
+
+Three things the measurement added beyond restoring the guard:
+
+- **The pin is a vehicle, not the defect.** `fitQuality` is scale-invariant *by
+  construction* — `ObservationFit` clusters normalised durations `ln(duration / unit)`, and
+  separation × ratio × tightness are all unchanged by a uniform `ln 2` shift. Where the
+  wrong unit came from cannot matter.
+- **The error is asymmetric.** Pinned slow the lattice's shrinkage absorbs it (10 WPM
+  against a true 20 gives 15.2 % CER; 13.3 WPM gives 2.5 %, identical to unpinned); pinned
+  fast it shatters (30 → 38.0 %, 40 → 297.5 %, 53 → 310.1 %). Only 6.7 WPM trips the gate,
+  and on a shape error rather than a scale one.
+- **A pin disables D-21's re-fit** (FR-9.5 owns the unit while pinned), so the streaming-vs-batch
+  disagreement — D-1's third candidate direction, and the one step 3 made available for free —
+  is not computed in precisely the state that needs it.
 
 ### Step 4 — Make a scale error visible · medium · `known-issues` D-1
 
