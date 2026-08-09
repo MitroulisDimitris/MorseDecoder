@@ -130,12 +130,14 @@ interchangeable — see the caveat in `version-history.md`. All six milestones o
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 
-Open High defects: `known-issues.md` D-2, D-6, D-8, D-9, plus risks G-1 and G-2. D-1 closed
+Open High defects: `known-issues.md` D-2, D-6, D-8, plus risks G-1 and G-2. D-9 closed with
+`decisions.md` D-23 — a lock that has decoded nothing for 10 s is handed to a distinct keyed
+signal elsewhere, taking a stranded 612 → 1150 Hz jump from 2 characters to 88. D-1 closed
 with `decisions.md` D-22 — a wrong *timebase* is now flagged by reading the decoded
 characters, because Morse timing is scale-free and no timing score can ever see one. Its
 residual half is D-11. The ordered plan — what is cheap, what is blocked, and what changed
-the priorities — is in `progress.md`; **every remaining step is blocked**, three on owner
-decisions and one on the toolchain.
+the priorities — is in `progress.md`; **every remaining step is blocked**: 7 on the real
+recording being supplied, 9 on an owner decision, 8 on the toolchain.
 
 ## Undecided
 

@@ -133,16 +133,22 @@ class SessionSequenceTest {
      * The operator moves frequency, or the user tunes the radio. The lock should follow
      * and the change should be marked (FR-2.13).
      *
-     * Measured today: **2 characters** for the whole second transmission, and the lock
-     * never leaves 612 Hz. The deadlock is between two individually-correct guards — the
-     * automatic re-lock needs `poorElements` to accumulate (FR-2.10.1, elements not
-     * seconds, D-7), but a lock on a now-empty frequency produces no elements at all, so
-     * the counter never advances; and FR-2.10.2 suspends the check while `lowSignal`
-     * holds, which it does. D-13's dead-end recovery breaks exactly this tie but was
-     * scoped to locks that had *never* decoded anything, and this one had.
+     * Was **2 characters** for the whole second transmission, with the lock never leaving
+     * 612 Hz. The deadlock was between two individually-correct guards — the automatic
+     * re-lock needs `poorElements` to accumulate (FR-2.10.1, elements not seconds, D-7),
+     * but a lock on a now-empty frequency produces no elements at all, so the counter never
+     * advances; and FR-2.10.2 suspends the check while `lowSignal` holds, which it does.
+     * D-13's dead-end recovery breaks exactly this tie but was scoped to locks that had
+     * *never* decoded anything, and this one had.
+     *
+     * Fixed by `decisions.md` D-23: a lock that has committed nothing for 10 s while a
+     * distinct keyed signal exists elsewhere is handed over. The `toneHz` assertion is the
+     * one to watch — the re-lock lands on the sweep's reading of the new tone, which jitters
+     * around it, and `known-issues` D-10 says the tracking EMA cannot re-centre from far
+     * off. If this starts failing on the frequency rather than the character count, that is
+     * D-10 surfacing here, not this fix regressing.
      */
     @Test
-    @KnownFailure("D-9", "a tone change strands the lock permanently")
     fun `a tone jump mid-session is recovered and marked`() {
         val first = morse(toneHz = 612.0, seed = 45L)
         val second = morse(toneHz = 1150.0, seed = 46L)

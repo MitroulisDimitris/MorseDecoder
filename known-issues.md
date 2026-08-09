@@ -91,9 +91,8 @@ Two tests hold it, deliberately separated (`HonestFailureTest`):
   removed; this one asserts CER > 0.5, which survives any legitimate fix (a decoder that
   suppressed the output would score 100 %) and fails loudly if the scale error stops
   happening.
-- `a decode built on a wrong unit does not report perfect confidence` —
-  `@KnownFailure("D-1")`, and asserts the **defect**: either the gate fires or `fitQuality`
-  drops to at least its own suppression threshold (`emitFitSuppressBelow`, 0.35).
+- `a decode built on a wrong unit is flagged by some signal` — asserts the **defect**. It
+  was `@KnownFailure("D-1")` when written and passes since D-22 below.
 
 **The pin is the vehicle, not the defect.** `ObservationFit` scores 2-means clusters over
 *normalised* durations `ln(duration / unit)`, and `fitQuality` is separation × ratio ×
@@ -102,8 +101,8 @@ shift changes none of them. Where the wrong unit came from is irrelevant to whet
 can see it.
 
 The pin also disables D-21's periodic re-fit (FR-9.5 owns the unit while pinned), so the one
-signal that might have caught this — a streaming-vs-batch disagreement, the third candidate
-direction below — is not computed at all in this state. That is a real gap in its own right.
+signal that might have caught this — a streaming-vs-batch disagreement — is not computed at
+all in this state. That is a real gap in its own right.
 
 The direction of the error matters, and the asymmetry is worth recording. Pinned *slow* the
 decoder largely recovers (10 WPM against a true 20: CER 15.2 %; 13.3 WPM: 2.5 %, identical
@@ -475,7 +474,7 @@ Two further holes in the same area, visible in the measurements:
 
 ---
 
-## D-9 — A tone change mid-session strands the lock permanently · High
+## D-9 — A tone change mid-session strands the lock permanently · FIXED
 
 The operator moves frequency, or the user tunes the radio. Measured: a jump from 612 Hz to
 1150 Hz mid-session yields **2 characters** for the whole second transmission, and the lock
@@ -491,21 +490,30 @@ It is a deadlock between two guards that are each individually correct:
 D-13's dead-end recovery breaks exactly this tie, but was deliberately scoped to locks that
 had **never** decoded anything. This lock had, so it is excluded.
 
-**The fix is decided (2026-08-09), not yet built.** Re-lock automatically when the current
-lock has produced no committed character for **10 s** *and* a peak elsewhere in the band
-passes D-13's keying test. The owner has accepted the D-7 trade this carries: a proven lock
-can be taken away during a legitimate pause if another station happens to be keying —
-precisely the asymmetry D-7 chose to avoid.
+**Fixed by `decisions.md` D-23.** A lock that has committed nothing for **10 s** is handed
+over to a distinct keyed signal elsewhere in the band. Measured by ablation on one build:
 
-AC-9 stays safe by the conjunction rather than by the timer. 30 s of silence offers no keyed
-peak, so the second condition never holds; the timer alone would not be safe, because 10 s is
-inside the range a very slow Farnsworth sender leaves between words.
+| jump from 612 Hz | before | after |
+|---|---|---|
+| → 1150 Hz | 2 chars, 98.4 % CER | **88 chars, 11.9 %** |
+| → 900 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 1600 Hz | 2 chars, 98.4 % | **90 chars, 12.7 %** |
+| → 420 Hz | 2 chars, 98.4 % | **88 chars, 12.7 %** |
 
-The keying test is load-bearing and is **not** the candidate test: FR-2.14 candidacy is
-6 dB + 100 Hz + 2 s sustain with no keying check, and a probe of a healthy 612 Hz decode
-shows spurious candidates at 1680, 840, 435 and 1017 Hz throughout, any of which would
-otherwise be able to steal a working lock. Implementation notes and the measured stranded
-state are in `progress.md` step 5.
+The first transmission is untouched (96 characters, 4.0 %) and each recovery costs one
+re-lock. `DecoderBench` is identical to its `noStall` ablation on all 16 scenarios.
+
+The owner accepted the D-7 trade on 2026-08-09: a proven lock can now be taken during a
+legitimate pause if another station is keying. AC-9 is held not by the timer but by the
+requirement that **the current lock be silent** — a keyed frequency is never stranded — which
+is what stops the same station's own sideband stealing the lock when it resumes. The full
+account of the three conditions, each of which was bought with a broken test, is in D-23.
+
+Regression test: `SessionSequenceTest."a tone jump mid-session is recovered and marked"`,
+formerly the `@KnownFailure`. Watch its tone assertion rather than its character count: the
+re-lock lands 19–42 Hz off across the four jumps and **D-10** says the EMA cannot re-centre
+from there, so it passes at 18.7 Hz against a 25 Hz bar. A future failure on the frequency is
+D-10 surfacing here, not this fix regressing.
 
 ---
 

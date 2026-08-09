@@ -345,7 +345,14 @@ class LiveEngineTest {
         // Guard against a vacuous test: the carrier really is the stronger peak, so
         // power-only selection genuinely fails here.
         val powerOnly = LiveDecoderEngine(
-            cfg = LiveDecoderEngine.Config(requireKeyingToLock = false)
+            // `stalledLockMs` off as well: D-9's stalled-lock rule is a third recovery
+            // mechanism and its keying test is deliberately not ablated by
+            // `requireKeyingToLock`, so without this the control would recover too and the
+            // anti-vacuity check would prove nothing.
+            cfg = LiveDecoderEngine.Config(
+                requireKeyingToLock = false,
+                stalledLockMs = Double.MAX_VALUE,
+            )
         )
         feedInChunks(powerOnly, mixed)
         powerOnly.finish()
@@ -382,6 +389,7 @@ class LiveEngineTest {
             cfg = LiveDecoderEngine.Config(
                 unprovenLockMs = Double.MAX_VALUE,
                 unkeyedLockSweeps = Int.MAX_VALUE,
+                stalledLockMs = Double.MAX_VALUE,   // D-9's rule recovers this too
             )
         )
         feedInChunks(stuck, gen.samples.copyOfRange(0, 16_000))

@@ -19,7 +19,7 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ## Where we are — 2026-08-09
 
-Nineteen commits over twelve days. Both decode paths exist and work, the app builds, and the
+Twenty-one commits over twelve days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
@@ -62,8 +62,8 @@ size. None added a model; each deleted an assumption.
 
 ## The commits
 
-Nineteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
-omitted; the rest are below, including the five that changed no decoder behaviour.
+Twenty-one commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+omitted; the rest are below, including the six that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
 |---|---|---|---|---|
@@ -85,7 +85,9 @@ omitted; the rest are below, including the five that changed no decoder behaviou
 | 16 | `efdfb02` | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
 | 17 | `7ec06c3` | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
 | 18 | `d83d609` | 08-07 | 4a D-1 reproducer | — (tests only) |
-| 19 | *(this commit)* | 08-09 | D-22 output plausibility (step 4) | 12.3 % (unchanged) |
+| 19 | `338fac4` | 08-09 | D-22 output plausibility (step 4) | 12.3 % (unchanged) |
+| 20 | `fb57b22` | 08-09 | D-9 decision | — (docs only) |
+| 21 | *(this commit)* | 08-09 | D-23 stalled-lock re-lock (step 5) | 12.3 % (unchanged) |
 
 ### 1 · `ad5479d` — init
 
@@ -396,7 +398,7 @@ is stated and labelled with what it rests on.
 | `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
 | ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
 | `known-issues` D-8 | High | Speech and RTTY decode as Morse; the fit score cannot separate them | 7 (blocked) |
-| `known-issues` D-9 | High | A tone change mid-session strands the lock permanently | 5 (blocked) |
+| ~~`known-issues` D-9~~ | FIXED | A tone change mid-session stranded the lock permanently — closed by `decisions.md` D-23. A stalled lock is handed to a distinct keyed signal after 10 s | 5 |
 | `known-issues` D-10 | Medium | Tone readout stays ~76 Hz off after recovering from a wrong lock | — none planned |
 | `known-issues` D-3 | Low | Mains veto costs tone-readout accuracy (~20 Hz), not decoding | — accepted |
 | ~~**N-1**~~ | FIXED | Bootstrap seed had no outlier protection — closed by `decisions.md` D-17 | 1 |
@@ -615,10 +617,10 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Eight of thirteen are done, one is closed unstarted.** Of the four still open, **none is
-ready** — all four are blocked, three on an owner decision rather than on effort (5, 7, 9)
-and one on the toolchain (8). The decisions are collected at the foot of this file, and
-answering them is now the only way the plan moves.
+**Nine of thirteen are done, one is closed unstarted.** Of the three still open, **none is
+ready**: 7 and 9 wait on an owner decision, 8 on the toolchain. Two of the six questions at
+the foot of this file are now answered — the D-9 trade (step 5, built) and the real-corpus
+decision (step 7, which needs the audio file itself before anything can start).
 
 **Steps 4a and 4 are both done and `known-issues` D-1 is closed.** 4a restored the
 reproducer by *injecting* the error — no synthetic fixture bootstraps one any more — pinning
@@ -639,7 +641,7 @@ without suppressing (`decisions.md` D-22). No CER change on either path.
 | 4 | Make a scale error visible | **done** · this commit (D-22) | medium | **As predicted: no CER change, a silent wrong answer is now a flagged one.** Marks per committed character over a 48-char window, flagged below 1.9; fires on the D-1 reproducer at 1.03, on none of the 16 healthy scenarios. `DecoderBench` byte-identical. Margin **1.50×**, and it *inverts* at a 16-char window — the long window is the finding. Reports only, never suppresses. Closes `known-issues` D-1; opens D-11 | measured (D-22) |
 | 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
 | 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
-| 5 | The tone-jump deadlock | **ready** · decided 2026-08-09 | small | Auto re-lock after **10 s** with no committed character *and* a keyed peak elsewhere; the D-7 trade is accepted. Recovers a session that currently yields 2 characters for a whole transmission. One `SessionSequenceTest` known failure (D-9) should start passing. Risks: AC-9 stays green only by the keying conjunction, and the re-lock will land ~40 Hz off tone (D-10) | derived |
+| 5 | The tone-jump deadlock | **done** · this commit (D-23) | small | **A stranded session recovers: 2 chars at 98.4 % CER → 88 at 11.9 %**, consistent across four jump targets, one re-lock each, first transmission untouched. `DecoderBench` identical to its `noStall` ablation. Cost three corrections found by broken tests — the keying test must ignore its own ablation switch, the current lock must be silent (AC-9), and the target must be a sustained candidate not a single sweep. Closes `known-issues` D-9; the re-lock still lands 19–42 Hz off (D-10) | measured (D-23) |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
 | 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
@@ -826,9 +828,9 @@ character shapes, `fit 1.00`, and mean lattice confidence **0.978 / 0.990** — 
 0.943 of a `hand-18` decode four times more accurate. That residual was the second half of
 D-1 and is now `known-issues` **D-11**, with its obvious candidate measured and ruled out.
 
-### Step 5 — The tone-jump deadlock · small · **ready** · `known-issues` D-9
+### Step 5 — The tone-jump deadlock · **DONE** · `decisions.md` D-23
 
-**Decided 2026-08-09.** Re-lock **automatically** when the current lock has produced nothing
+**Decided and built 2026-08-09.** Re-lock **automatically** when the current lock has produced nothing
 for **10 s** *and* a peak elsewhere in the band passes D-13's keying test. The owner accepts
 the D-7 trade: a proven lock can now be taken away during a legitimate pause if another
 station is keying at the time.
@@ -854,10 +856,32 @@ Three things measurement says the implementation must get right:
   asserts `abs(toneHz - 1150) < 25`. That assertion may need to move, or D-10 may need to be
   fixed first; establish which before changing the number.
 
-The measured starting point: a 612 → 1150 Hz jump yields **2 characters** for the whole
-second transmission, the lock sits at 612 Hz in DEGRADED with `lowSignal` true for 75 s, and
-the UI shows "Low signal — decoding stopped", which names the wrong cause. One
-`SessionSequenceTest` known failure (D-9) should start passing.
+**Measured**, by ablation on one build (`noStall` is the new `DecoderBench` variant):
+
+| jump from 612 Hz | before | after |
+|---|---|---|
+| → 1150 Hz | 2 chars, 98.4 % CER | **88 chars, 11.9 %** |
+| → 900 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 1600 Hz | 2 chars, 98.4 % | **90 chars, 12.7 %** |
+| → 420 Hz | 2 chars, 98.4 % | **88 chars, 12.7 %** |
+
+First transmission untouched in both arms (96 characters, 4.0 %), one re-lock per recovery.
+The residual ~12 % is the 10 s spent proving the lock is dead plus the re-bootstrap after it.
+`DecoderBench` identical to `noStall` on all 16 scenarios — mean 12.3 %, worst 65.8 % — since
+no bench scenario contains a tone jump. Known failures 10 → **9 across 4 defects**.
+
+**All three warnings above were justified by breakage, and the third was wrong about the
+cause.** The keying ablation hole broke two D-13 control arms. The distance rule broke AC-9 —
+0.6 s after the *same station* resumed from a 30 s pause, its own sideband 40.4 Hz away took
+the lock — and the fix for that was not distance but requiring the current lock to be silent.
+The `hand-13-rough` cost was real (65.8 → 67.1 %) but not the predicted D-10 interaction: a
+one-sweep transient at 731 Hz out-ranked the true signal. Requiring an established FR-2.14
+candidate removed it, and the fixture is now byte-identical to the off arm. Full account in
+D-23.
+
+**Not fixed:** the re-lock lands **19–42 Hz** off the new tone and D-10 says the EMA cannot
+re-centre from there. The regression test passes at 18.7 Hz against its own 25 Hz bar — a thin
+margin against an open defect.
 
 ### Step 6a — Locate the residual error · **DONE** · `ResidualDiagnostic`
 
@@ -935,14 +959,20 @@ not to the front end. **Do not start this on synthetic evidence.** It may still 
 a real recording, where the envelope is not a clean +5 dB synthetic — but that is G-1's
 question, and this step should stay closed until G-1 can pose it.
 
-### Step 7 — Real corpus · blocked on a decision · `G-1`
+### Step 7 — Real corpus · **decided, blocked on the file itself** · `G-1`
 
 Every fixture is synthetic, and lesson 5 above shows synthetic-only tuning produces
 confidently inverted thresholds. One real recording exists and is not committed; a ~20 s
-16 kHz mono excerpt is about 640 kB. **Needs a decision** on committing binary audio, and a
-ground-truth transcript that does not yet exist — only fragments are legible (`ALL BEST`, a
-callsign, `DL4`). A weaker tone-lock-plus-character-count assertion is possible today and
-would be better than nothing. This gates the D-8 structure gate, which is measured, works
+16 kHz mono excerpt is about 640 kB. **Decided 2026-08-09:** commit a ~20 s excerpt, and assert
+**anchors plus no-inversion guards** rather than a transcript — the legible fragments
+(`ALL BEST`, `DL4`, the callsign), a tone lock near 1882 Hz, a speed near 17.7 WPM, and the
+part that pays for D-8: that this recording scores **above every non-Morse fixture** on any
+gate we add. No invented transcript.
+
+**Still blocked, but on the file rather than a decision.** The recording is not in the tree,
+not in git history, and no path for it is documented; every number quoted against it in
+`known-issues.md` was measured in an earlier session against a machine-local copy. Nothing
+here can start until it is supplied. This gates the D-8 structure gate, which is measured, works
 on 6 of 7 non-Morse fixtures, and is deliberately unimplemented until its margins can be
 established against more than one real transmission.
 
@@ -969,8 +999,11 @@ These block work that is otherwise ready. Listed so they can be answered togethe
 
 1. ~~**D-9 re-lock trade** (step 5)~~ — **ANSWERED 2026-08-09: automatic re-lock, N = 10 s,
    and the owner accepts the D-7 trade.** Written up in step 5 below; step 5 is now ready.
-2. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
-   truth for a recording that is only partly legible.
+2. ~~**Committing real audio** (step 7)~~ — **ANSWERED 2026-08-09: commit a ~20 s excerpt,
+   and assert anchors plus no-inversion guards rather than a transcript.** Step 7 is written
+   up below and is **not** ready: nobody has supplied the file. It is not in the tree, not in
+   git history, and no path for it is documented — the numbers quoted against it throughout
+   `known-issues.md` were measured in an earlier session on a machine-local copy.
 3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
    sideloading to a physical handset.
 4. **Keystore location** (step 9).

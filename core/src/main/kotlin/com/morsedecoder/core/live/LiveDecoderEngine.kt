@@ -130,6 +130,24 @@ class LiveDecoderEngine(
         val relockPoorElements: Int = 20,       // FR-2.10.1 — elements, never seconds
         val relockFitThreshold: Double = 0.45,
         val relockScoreMargin: Double = 1.5,    // FR-2.10.3
+        /**
+         * D-9 stalled-lock recovery: how long a lock may commit **no character at all**
+         * before a keyed signal elsewhere in the band may take it. [Double.MAX_VALUE]
+         * disables it, which is how the ablation and the D-7 regression tests turn it off.
+         *
+         * This is the one guard in FR-2.10 counted in **seconds**, and it is only sound
+         * because of the condition it is conjoined with. The element counters cannot reach
+         * this case: the operator moves frequency, the old lock produces no elements at all,
+         * so `poorElements` never advances and `lowSignal` suspends the check anyway
+         * (`known-issues` D-9 — measured at 2 characters for a whole 75 s transmission).
+         * A timer is the only thing that observes "nothing is happening here".
+         *
+         * **What keeps silence safe is the keyed alternative, not the clock** (AC-9). A
+         * 30 s pause offers no keyed peak, so the second condition never holds and the
+         * timer alone can never fire. 10 s on its own would be unsafe — a very slow
+         * Farnsworth sender leaves gaps that long between words.
+         */
+        val stalledLockMs: Double = 10_000.0,
         val bootstrapMinMarks: Int = 8,
         /**
          * Widest dash/dot ratio a bootstrap seed may claim before it is discarded as a
@@ -414,6 +432,12 @@ class LiveDecoderEngine(
     private var unkeyedSweeps = 0
     /** Characters emitted under the current lock — zero means it has proven nothing. */
     private var charsSinceLock = 0
+    /**
+     * When the current lock last committed a character, or when it was taken. Drives the
+     * D-9 stalled-lock check; committed characters rather than elements, because in the
+     * stranded state the front end still produces elements from noise at the dead frequency.
+     */
+    private var lastCharMs = 0.0
     /** Recent post-bootstrap mark log-durations, for the D-2 batch re-fit. */
     private val refitMarks = ArrayDeque<Double>()
     private var marksSinceRefit = 0
@@ -905,6 +929,7 @@ class LiveDecoderEngine(
             if (cfg.suppressAtSpeedClamp && speedImplausible) continue
             transcript.add(ch)
             charsSinceLock++
+            lastCharMs = nowMs()
             plausibility.add(ch.elements.count { it.isMark })
             events.add(Event.CharDecoded(ch))
         }
@@ -982,6 +1007,7 @@ class LiveDecoderEngine(
                 }
                 updateCandidates(peaks)
                 autoRelockCheck(peaks, near)
+                stalledLockCheck()
             }
         }
     }
@@ -1092,6 +1118,83 @@ class LiveDecoderEngine(
         }
     }
 
+    /**
+     * D-9: the tone-jump deadlock. The operator moves frequency and the lock never follows,
+     * because the two guards that should notice cannot: `poorElements` counts elements and
+     * an abandoned frequency produces none, while FR-2.10.2 suspends the check entirely
+     * under `lowSignal`, which holds throughout. Measured: a 612 → 1150 Hz jump yields
+     * **2 characters** for a whole 75 s transmission, with the lock sitting at 612 Hz.
+     *
+     * So this deliberately bypasses both — it is the case they cannot see — and rests
+     * instead on a conjunction the guards can trust: nothing has been decoded here for
+     * [Config.stalledLockMs], **and** something elsewhere in the band is being keyed.
+     *
+     * The keying test is what makes it safe, and it is **not** the candidate test. FR-2.14
+     * candidacy is 6 dB + 100 Hz + 2 s sustain with no keying check at all, and a healthy
+     * 612 Hz decode offers spurious candidates at 1680, 840, 435 and 1017 Hz throughout —
+     * any of which could otherwise take a working lock during a pause. [keyedNow] is the
+     * discriminator, and silence supplies no keyed peak, which is what holds AC-9.
+     *
+     * Two conditions here were bought with a broken AC-9 rather than reasoned in advance,
+     * and both matter:
+     *
+     * - **The current lock must itself be silent.** Without this the rule fired 0.6 s after
+     *   the *same station* resumed from a 30 s pause, because the stall clock had long
+     *   expired and the returning signal threw a peak past the distance test. A keyed
+     *   frequency is not stranded, whatever the transcript says.
+     * - **The alternative must be ≥ [Config.candidateMinDistHz] away, not
+     *   [Config.relockMinDistHz].** The peak that stole that lock sat 40.4 Hz off — a
+     *   keying sideband of the signal already being tracked, clearing the 40 Hz bar by
+     *   0.4 Hz. FR-2.14's 100 Hz is the distance at which a peak is a *distinct signal*,
+     *   which is precisely the claim this rule has to make before taking a lock away.
+     *
+     * The pin still wins (FR-2.10.5) and the hold-off still applies (FR-2.10.4), so a fresh
+     * lock actually gets 15 s rather than 10 before this can consider it.
+     *
+     * **This spends the D-7 asymmetry deliberately** — a proven lock can now be taken away
+     * during a legitimate pause if another station happens to be keying. That trade was
+     * declined when D-7 was written and accepted by the owner on 2026-08-09, on the grounds
+     * that a stranded session is the more common and more damaging failure.
+     */
+    private fun stalledLockCheck() {
+        if (pinned) return                                           // FR-2.10.5
+        if (nowMs() - lastCharMs < cfg.stalledLockMs) return
+        if (nowMs() - lastLockChangeMs < cfg.relockHoldoffMs) return // FR-2.10.4
+        // A frequency that is being keyed is not stranded, whatever the transcript says —
+        // it may be mid-bootstrap, or its output gated. Only silence *here* means the
+        // operator has gone, and this is what stops the rule confusing "the station paused
+        // and came back" with "the station moved" (AC-9).
+        if (keyedNow(toneHz)) {
+            lastCharMs = nowMs()
+            return
+        }
+        // The target must be an established **candidate**, not merely this sweep's best
+        // peak. One sweep is not evidence enough to take a lock away: measured on
+        // `hand-13-rough`, a transient at 731 Hz out-ranked the real 588 Hz signal on a
+        // single sweep and won the lock, costing 18 characters.
+        //
+        // `candidates` is the existing FR-2.14 machinery for exactly this question —
+        // 30 Hz matching with an EMA across sweeps, 2 s of sustain, 1 s eviction, ordered
+        // by strength. Re-deriving it here with a private counter failed on peak jitter:
+        // the readings wander ±45 Hz between sweeps, so a naive same-frequency test never
+        // accumulates. Its 100 Hz minimum distance is also the right bar rather than a
+        // tolerated side effect: it is the distance at which FR-2.14 is willing to call a
+        // peak a separate signal, and separateness is this rule's entire premise.
+        val alt = candidates.firstOrNull { allowedLockFreq(it) && keyedNow(it) } ?: return
+        switchLock(alt, RelockTrigger.AUTOMATIC)
+    }
+
+    /**
+     * The keying test with no ablation switch in front of it.
+     *
+     * [isKeyed] short-circuits to true when [Config.requireKeyingToLock] is off, which is
+     * right for a *preference* between peaks. For the D-9 rule keying is the whole safety
+     * argument, so turning it off would leave a bare 10 s timer able to move a lock — the
+     * exact thing FR-2.10.1 exists to prevent.
+     */
+    private fun keyedNow(freqHz: Double): Boolean =
+        keyingSpreadAt(freqHz) >= cfg.lockKeyingSpread
+
     // ---- lock transitions ----
 
     private var lockAnchorHz = 0.0
@@ -1107,6 +1210,7 @@ class LiveDecoderEngine(
         needResync = true
         unkeyedSweeps = 0
         charsSinceLock = 0
+        lastCharMs = nowMs()
     }
 
     private fun switchLock(toHz: Double, trigger: RelockTrigger) {
@@ -1151,6 +1255,7 @@ class LiveDecoderEngine(
         candidateList.clear()
         unkeyedSweeps = 0
         charsSinceLock = 0
+        lastCharMs = nowMs()
         lockState = LockState.LOCKED
         lockedSinceMs = nowMs()
         lastLockChangeMs = nowMs()

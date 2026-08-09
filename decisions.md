@@ -909,3 +909,90 @@ here for the first time — mean lattice confidence of **0.978 and 0.990**, high
 0.943 of a `hand-18` decode that is four times more accurate. That is `known-issues` D-11,
 opened by this work: the system still has no signal that correlates with how wrong it is,
 and the obvious candidate is now measured and ruled out.
+
+---
+
+## D-23 — A stalled lock is handed over to a keyed signal elsewhere
+
+`known-issues` D-9: the operator moves frequency and the lock never follows. Measured, a
+612 → 1150 Hz jump yields **2 characters** for a whole 75 s transmission while the lock sits
+at 612 Hz in DEGRADED. The two guards that should notice cannot — `poorElements` counts
+elements and an abandoned frequency produces none, and FR-2.10.2 suspends the check entirely
+under `lowSignal`, which holds throughout. D-13's dead-end recovery breaks exactly this tie
+but was scoped to locks that had never decoded anything, and this one had.
+
+### The decision
+
+Owner, 2026-08-09: **re-lock automatically** after **10 s** with no committed character, when
+a distinct keyed signal exists elsewhere. This spends the D-7 asymmetry deliberately — a
+proven lock can now be taken during a legitimate pause if another station is keying at the
+time. D-7 declined that trade; the judgement now is that a stranded session is the more
+common and more damaging failure.
+
+### The rule, and the three conditions measurement added to it
+
+The plan's shape was "nothing for N seconds **and** a keyed peak exists elsewhere". Each of
+the three qualifications below was bought with a broken test, not reasoned in advance.
+
+**The keying test must ignore its own ablation switch.** `isKeyed` short-circuits to `true`
+when `requireKeyingToLock` is off. That switch ablates a *preference* between peaks; here
+keying is the entire safety argument, so with it off the rule degenerated to a bare 10 s
+timer able to move a lock — precisely what FR-2.10.1 exists to prevent. Two D-13 tests caught
+it, via their anti-vacuity control arms.
+
+**The current lock must itself be silent.** Without this AC-9 failed: 0.6 s after the *same
+station* resumed from a 30 s pause, the lock jumped 612 → 571.8 Hz onto its own keying
+sideband, 40.4 Hz away, clearing `relockMinDistHz` by 0.4 Hz. The stall clock had long
+expired and the returning signal supplied the keyed peak. A frequency being keyed is not
+stranded, whatever the transcript says — it may be mid-bootstrap or output-gated — so the
+clock resets whenever the lock is keying. **This one condition is what holds AC-9**; the
+distance rule turned out not to be needed for it.
+
+**The target must be an established candidate, not this sweep's best peak.** With the rule
+firing on raw peaks, `hand-13-rough` went 65.8 → 67.1 %: a transient at 731 Hz out-ranked the
+real 588 Hz signal on a single sweep, took the lock, and delayed recovery from 49 s to 61 s
+for a loss of 18 characters. The first diagnosis — that a 100 Hz minimum distance had
+excluded the true signal at 69 Hz — was **measured and refuted**: at 40 Hz the same hop
+happened. The fault was one sweep of evidence, not the distance.
+
+Re-deriving persistence with a private counter then failed on peak jitter, because readings
+wander ±45 Hz between sweeps and a same-frequency test never accumulates. The answer was
+already in the file: FR-2.14's candidate list does 30 Hz matching with an EMA across sweeps,
+2 s of sustain, 1 s eviction, ordered by strength. Its 100 Hz minimum distance comes back
+with it and is now the right bar rather than a tolerated side effect — it is the distance at
+which FR-2.14 is willing to call a peak a separate signal, and separateness is this rule's
+premise.
+
+### Measured
+
+By ablation on one build (`stalledLockMs = Double.MAX_VALUE` is the off arm, and
+`DecoderBench` gains a `noStall` variant):
+
+| jump from 612 Hz | off | on |
+|---|---|---|
+| → 1150 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 900 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 1600 Hz | 2 chars, 98.4 % | **90 chars, 12.7 %** |
+| → 420 Hz | 2 chars, 98.4 % | **88 chars, 12.7 %** |
+
+The first transmission is untouched in both arms (96 characters, 4.0 %), and each recovery
+costs exactly one re-lock. The residual ~12 % is the 10 s of audio spent proving the lock is
+dead, plus the re-bootstrap after it.
+
+`DecoderBench` is **identical to the `noStall` column on all 16 scenarios** — mean 12.3 %,
+worst 65.8 % — which is expected, since no bench scenario contains a tone jump. AC-9 green.
+Known failures 10 → **9 across 4 defects**.
+
+### What it does not fix
+
+The re-lock lands on the candidate list's reading of the new tone, which is **19–42 Hz off**
+across the four jumps, and `known-issues` D-10 says the tracking EMA cannot re-centre from
+there. The decode survives — the analysis window is ~100 Hz wide, and all four recover to
+~12 % — but the `tone` readout is wrong afterwards. The D-9 regression test asserts the tone
+within 25 Hz and passes at 18.7 Hz on its 1150 Hz fixture; that is a **thin margin against a
+known-open defect**, and a failure there in future is D-10 surfacing, not this rule
+regressing.
+
+D-10's own known-failure test briefly started passing under the first, over-eager version of
+this rule. That was an artefact of a lock being taken at a luckier moment, not a fix; it
+returned to failing once the rule was corrected, which is why it was not closed.

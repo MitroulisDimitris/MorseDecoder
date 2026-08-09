@@ -114,6 +114,7 @@ class DecoderBench {
             Variant("fixedWin", d.copy(adaptiveWindow = false)),   // pre-FR-2.7
             Variant("noKeyGate", d.copy(requireKeyingToLock = false)),
             Variant("noDeadEnd", d.copy(unprovenLockMs = Double.MAX_VALUE, unkeyedLockSweeps = Int.MAX_VALUE)),
+            Variant("noStall", d.copy(stalledLockMs = Double.MAX_VALUE)),   // D-9 / D-23
             Variant("band1200", d.copy(bandMaxHz = 1200.0)),
             Variant("noFitGate", d.copy(outputGateEnabled = false)),
             Variant(
