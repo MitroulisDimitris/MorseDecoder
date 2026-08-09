@@ -17,9 +17,9 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ---
 
-## Where we are — 2026-08-07
+## Where we are — 2026-08-09
 
-Eighteen commits over ten days. Both decode paths exist and work, the app builds, and the
+Nineteen commits over twelve days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
@@ -62,8 +62,8 @@ size. None added a model; each deleted an assumption.
 
 ## The commits
 
-Eighteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
-omitted; the rest are below, including the four that changed no decoder behaviour.
+Nineteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+omitted; the rest are below, including the five that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
 |---|---|---|---|---|
@@ -84,7 +84,8 @@ omitted; the rest are below, including the four that changed no decoder behaviou
 | 15 | `d0d2082` | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
 | 16 | `efdfb02` | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
 | 17 | `7ec06c3` | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
-| 18 | *(this commit)* | 08-07 | 4a D-1 reproducer | — (tests only) |
+| 18 | `d83d609` | 08-07 | 4a D-1 reproducer | — (tests only) |
+| 19 | *(this commit)* | 08-09 | D-22 output plausibility (step 4) | 12.3 % (unchanged) |
 
 ### 1 · `ad5479d` — init
 
@@ -389,7 +390,8 @@ is stated and labelled with what it rests on.
 
 | ID | Severity | Summary | Addressed by |
 |---|---|---|---|
-| `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **reproducer restored by 4a** (a pinned 2× unit: 297.5 % CER at `fit 1.00`), so it is held by a failing test again | 4 |
+| ~~`known-issues` D-1~~ | FIXED | A unit-scale error was invisible to every quality signal — closed by `decisions.md` D-22. `fitQuality` still reads 1.00 there, and that is now understood to be *correct* | 4 |
+| `known-issues` D-11 | Medium | Nothing correlates with how wrong the decode is: 39–42 % CER at `fit 1.00` and confidence 0.978–0.990, **above** a decode four times more accurate — split out of D-1, obvious candidate ruled out | — none planned, needs G-1 |
 | `known-issues` D-2 | High | Live path decodes real hand-sent audio worse than file import — **narrowed** by D-21's re-bootstrap (speed corrected, CER 69.6 → 65.8 %), not closed: the gap needs the D-19 freeze, which cannot transfer to live | 3 (done) |
 | `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
 | ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
@@ -613,17 +615,19 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Seven of thirteen are done, one is closed unstarted.** Of the five still open, **one is
-ready** to start today (4) and **four are blocked** — three on an owner decision rather than
-on effort (5, 7, 9) and one on the toolchain (8). The decisions are collected at the foot of
-this file.
+**Eight of thirteen are done, one is closed unstarted.** Of the four still open, **none is
+ready** — all four are blocked, three on an owner decision rather than on effort (5, 7, 9)
+and one on the toolchain (8). The decisions are collected at the foot of this file, and
+answering them is now the only way the plan moves.
 
-**Step 4a is done** and D-1 is held by a failing test again. The reproducer had to be
-*injected* — no synthetic fixture bootstraps a scale error any more — so it pins the unit an
-octave fast (FR-9.5) on a clean 20 WPM signal and measures what notices: nothing does.
-202 characters for 62 sent, **297.5 % CER**, 98.5 % of it `E`/`T`/`I`/`M`, `fit 1.00` over a
-full window, `outputSuppressed` false, lock LOCKED. **Step 4 is next** — make that state
-visible — and it now has a fixture to be judged against.
+**Steps 4a and 4 are both done and `known-issues` D-1 is closed.** 4a restored the
+reproducer by *injecting* the error — no synthetic fixture bootstraps one any more — pinning
+the unit an octave fast on a clean 20 WPM signal: 202 characters for 62 sent, **297.5 % CER**,
+98.5 % of it `E`/`T`/`I`/`M`, at `fit 1.00` with nothing suppressed. 4 then made that state
+visible, and the route had to be non-timing: Morse timing is **scale-free**, so no timing
+score can ever see a wrong scale. `outputImplausible` reads the decoded characters instead —
+mean marks per character, 1.03 on the reproducer against 3.4 for real text — and warns
+without suppressing (`decisions.md` D-22). No CER change on either path.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
@@ -632,7 +636,7 @@ visible — and it now has a fixture to be judged against.
 | 2 | Decouple the decode from buffer size | **done** · this commit (D-20) | small | **Not neutral after all.** Absolute-sample-grid processing; transcripts now byte-identical across 512…8192. `DecoderBench` fed the worst chunk, so the honest numbers improved: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 → 69.6 %**, `noise-20@-5` **43.0 → 1.3 %**. Exposed `hesitation`'s true 43 % (was a 4096 fluke at 13.9 %) and re-pointed a D-10 known-failure | measured (D-20) |
 | 4a | Restore a reproducer for D-1 | **done** · this commit | small | **Restored by injection, not by waiting.** A unit pinned an octave fast on a clean 20 WPM signal: 202 chars for 62 sent, CER **297.5 %**, 98.5 % of it `E`/`T`/`I`/`M`, at `fit 1.00` with nothing suppressed and the lock LOCKED. No behaviour change; known failures 9 → 10 across 5 defects | measured |
 | 3 | Re-bootstrap rather than commit once | **done** · this commit (D-21) | medium | **Modest, not the 36.7 % the ceiling implied.** Batch re-fit every 16 marks, adopted in place on a material disagreement. Corrects reported speed (`hand-13-rough` 21.9 → 15.1 WPM) and CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live mean 12.7 → **12.3 %**; fires on nothing healthy. Capped short of the file's 36.7 % because the D-19 freeze cannot transfer to live (N-5) — the tracker resumes chasing bias | measured (D-21) |
-| 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
+| 4 | Make a scale error visible | **done** · this commit (D-22) | medium | **As predicted: no CER change, a silent wrong answer is now a flagged one.** Marks per committed character over a 48-char window, flagged below 1.9; fires on the D-1 reproducer at 1.03, on none of the 16 healthy scenarios. `DecoderBench` byte-identical. Margin **1.50×**, and it *inverts* at a 16-char window — the long window is the finding. Reports only, never suppresses. Closes `known-issues` D-1; opens D-11 | measured (D-22) |
 | 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
 | 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
 | 5 | The tone-jump deadlock | **blocked** · owner decision on N and the D-7 trade | small | Recovers a session that is currently dead until restarted. One `SessionSequenceTest` known failure (D-9) should start passing. Risk: AC-9 must stay green | derived |
@@ -776,14 +780,51 @@ Three things the measurement added beyond restoring the guard:
   disagreement — D-1's third candidate direction, and the one step 3 made available for free —
   is not computed in precisely the state that needs it.
 
-### Step 4 — Make a scale error visible · medium · `known-issues` D-1
+### Step 4 — Make a scale error visible · **DONE** · `decisions.md` D-22
 
-Today an octave-type unit error is invisible to every quality signal: `fitQuality` reads
-1.00, and `outputSuppressed` was false in all 16 bench scenarios. Cheapest candidate is
-scoring the decoded alphabet distribution — a transcript that is 90 % `E`/`T`/`I`/`M` is
-prima facie a scale error, real text is not — which is independent of timing and cannot be
-fooled by the clusters looking clean. Even if steps 1–3 fix the cause, the system should be
-able to say when it has one.
+`OutputPlausibility` averages the **marks per committed character** over the last 48
+characters — near 3.4 on real text, 1.0 when the timebase is an octave out — and
+`outputImplausible` reports when it falls below 1.9, on both paths, with a banner on the
+live screen and a line in the import summary. `known-issues` D-1 closes.
+
+**Why no timing signal could ever have done it.** Morse timing is scale-free: marks are 1
+and 3 units, gaps 1, 3 and 7, and every one is a ratio, so doubling the unit preserves all
+of them. `fitQuality` reads 1.00 on the 297 % decode because the honest answer to its
+question — does my two-cluster model fit my own measurements — really is yes. That kills
+both of the timing cross-checks D-1 listed as candidates, and leaves the decoded characters
+as the only place the scale-freedom breaks.
+
+**The measurement changed the design twice.** The plan named the alphabet distribution;
+marks-per-character is the same idea with a natural expected value, and separates slightly
+wider. More importantly the margin is much narrower than a whole-transcript statistic
+suggests, because a live flag judges a *rolling window*:
+
+| window | healthy min | scale-error max | margin |
+|---|---|---|---|
+| 16 | 1.13 | 1.19 | **0.95× — inverted** |
+| 32 | 1.88 | 1.38 | 1.36× |
+| **48** | **2.38** | **1.58** | **1.50×** |
+
+At 16 characters a healthy `hesitation` decode dips *below* a genuine scale error on a rough
+fist — lesson 5 arriving on schedule. Window length is the whole story; an EWMA of the same
+length gives 1.53×. The long window is affordable because the failure fills it fast: a scale
+error emits 3–4× as many characters per second (202 against 61 on the same audio).
+
+**It reports and never suppresses**, which is the more important half of the decision. The
+two rows binding the margin are the two most human fixtures in the corpus (`hesitation` 2.38,
+`hand-13-rough` 2.60), so a gate here is the D-8 inversion waiting to happen; and after 48
+characters the wrong output is already emitted, which P-2 forbids retracting. A separate test
+holds the false-positive side on both binding fixtures.
+
+`DecoderBench` byte-identical on both paths, as an additive statistic must be.
+
+**What it does not catch, and what it opened.** A unit that is too *long* merges characters
+instead of shattering them, moving the statistic up into the range real text occupies (3.73
+against a healthy max of 3.44) — this is one-sided, fast-side only. And it says nothing about
+ordinary wrongness: `hesitation` at 39.2 % CER and `qsb-impulse` at 41.8 % have normal
+character shapes, `fit 1.00`, and mean lattice confidence **0.978 / 0.990** — higher than the
+0.943 of a `hand-18` decode four times more accurate. That residual was the second half of
+D-1 and is now `known-issues` **D-11**, with its obvious candidate measured and ruled out.
 
 ### Step 5 — The tone-jump deadlock · small, but blocked · `known-issues` D-9
 

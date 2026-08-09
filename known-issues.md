@@ -24,7 +24,7 @@ Severity is about what a user experiences, not how hard the fix is:
 
 ---
 
-## D-1 — A unit-scale error scores a perfect fit · High
+## D-1 — A unit-scale error scores a perfect fit · FIXED
 
 `modelFitQuality` reports **1.00** — maximum confidence — on wholly incorrect output.
 
@@ -112,23 +112,40 @@ shatters (30 WPM: 38.0 %; 40: 297.5 %; 53: 310.1 %) — a short unit reads every
 of dots. Only the extreme slow end trips anything: at 6.7 WPM the fit collapses to 0.02 and
 the gate suppresses correctly, which is the gate working on a *shape* error, not a scale one.
 
-What remains as further evidence:
+### Closed by output plausibility · `decisions.md` D-22
 
-- the real recording, which still reads 30.6 WPM against a true 17.7 on the live path —
-  uncommitted, so blocked on **G-1**;
-- `fitQuality` reporting **1.00 on decodes measured at 13–23 % CER** (dash-heavy and
-  dot-heavy openings, +10 dB, 13 and 20 WPM). Confidence is still uncorrelated with
-  correctness even where the unit is roughly right.
+Something notices now: `LiveDecoderEngine.outputImplausible` and
+`FileResult.outputImplausible`. The reproducer above trips it at **1.03 marks per committed
+character** against 3.4 for real text.
 
-Candidate directions, none yet chosen:
+The scale-freedom argument is what settled the design. It rules out both of the timing
+cross-checks this entry used to list as candidates — there is no absolute anchor anywhere in
+the timing to check against, because every quantity in Morse is a ratio. It leaves exactly
+one place the freedom breaks, the **decoded characters**, and that is what the fix reads. The
+statistic, the 48-character window, the 1.9 threshold and the 1.50× margin behind it are all
+in D-22, along with the measurement that killed the shorter windows: at 16 characters a
+healthy `hesitation` decode dips *below* a genuine scale error.
 
-- Cross-check the unit against gap structure. Gaps are excluded from *estimating* the
-  unit for good reasons (D-2), but a 2× unit error predicts inter-character gaps at 6
-  units and word gaps at 14, which is checkable without using gaps as an estimator.
-- Score the decoded *alphabet distribution*. A transcript that is 90 % `E`/`T`/`I`/`M`
-  is prima facie a scale error — real text is not. Cheap, and independent of timing.
-- Treat a large disagreement between the streaming unit and a periodic batch re-fit as a
-  degraded state.
+**It reports; it does not suppress**, and that is a decision rather than an omission — the
+two rows binding the margin are the two most human fixtures in the corpus, which is lesson
+5's exact trap, and after 48 characters the wrong output is already emitted and P-2 forbids
+retracting it. So this closes "nothing can see it", not "it cannot happen".
+
+Regression tests, all passing: `HonestFailureTest."a decode built on a wrong unit is flagged
+by some signal"` and `."a unit pinned an octave out does not reproduce the text"` (the
+reproducer, which must keep failing to decode), plus `."a rough fist and a hesitant sender
+are not flagged as implausible"` for the false-positive side.
+
+Note `fitQuality` still reads **1.00** on the reproducer and that is now understood to be
+**correct**: it answers whether the two-cluster model fits its own measurements, and under a
+scale error it genuinely does. Forcing it down would make it lie about its own question.
+
+Two things this did not close, both carried forward rather than dropped:
+
+- the real recording still reads 30.6 WPM against a true 17.7 on the live path, and is
+  uncommitted — **G-1**;
+- confidence is still uncorrelated with correctness where the unit is roughly right, which
+  is now **D-11** below, with its obvious candidate measured and ruled out.
 
 ---
 
@@ -505,6 +522,47 @@ moved.
 Related to **D-3**, where a mains-vetoed frequency settles ~20 Hz off for a different
 reason. Both suggest the tracking EMA has no mechanism to re-centre once it is off by more
 than the hysteresis window (`trackWindowHz` = 15 Hz).
+
+---
+
+## D-11 — Nothing correlates with how wrong the decode is · Medium
+
+Split out of **D-1** when its scale-error half was closed by `decisions.md` D-22, because
+that fix does not touch this and it would otherwise have been dropped.
+
+Two scenarios decode at roughly two-fifths wrong while every signal the system publishes
+reads healthy. Measured by `ScaleErrorDiagnostic` (`DIAG=1`):
+
+| scenario | CER | `fitQuality` | mean confidence | marks/char | flagged? |
+|---|---|---|---|---|---|
+| `clean-20` | 2.5 % | 1.00 | 0.995 | 3.43 | — |
+| `hand-18` | 10.1 % | 0.95 | **0.943** | 3.39 | — |
+| `hesitation` | **39.2 %** | **1.00** | **0.978** | 2.73 | no |
+| `qsb-impulse` | **41.8 %** | **1.00** | **0.990** | 2.77 | no |
+
+**The obvious candidate is measured and inverted.** FR-6.6's per-character lattice confidence
+is the decoder's own statement of how sure it is, and it ranks `qsb-impulse` at 41.8 % CER
+(0.990) *above* `hand-18` at 10.1 % (0.943). Across the whole matrix it ranks a 297 % CER
+scale error (0.893) above a 65.8 % rough fist (0.793). It is a within-lattice quantity — how
+much better the winning path scored than its rivals — and under a wrong model every rival is
+wrong too, so the winner still wins comfortably. It measures decisiveness, not correctness.
+
+This is the same structural shape as D-1 and D-8 rather than a tuning gap: every score the
+decoder computes is a **self-consistency** score, and self-consistency is exactly what
+survives a systematically wrong answer. D-22 broke that circle once by reading the decoded
+characters instead of the timing, and marks-per-character catches only the shattering mode —
+`hesitation` and `qsb-impulse` produce normally-shaped characters that are simply the wrong
+ones.
+
+Held by `HonestFailureTest."a decode two-fifths wrong is distinguishable from a correct one"`,
+`@KnownFailure("D-11")`.
+
+Severity is Medium rather than High: unlike D-1 the output is *partly* right and visibly
+ragged, so the user is not being told a wrong answer is a good one so much as not being told
+how good it is. What would close it is a signal grounded outside the decoder's own model —
+lexicon agreement scored without applying it (FR-7.1 is already implemented and off by
+default, P-3), or the D-8 structure work. Both are blocked on **G-1**, which is also the only
+place a threshold for this could honestly be set.
 
 ---
 

@@ -72,12 +72,13 @@ isn't the app that was specified. Each traces to a principle in §1 of the requi
 ## Testing
 
 ```sh
-./gradlew :core:test                                             # full suite, ~115 tests
+./gradlew :core:test                                             # full suite, ~118 tests
 BENCH=1 ./gradlew :core:test --tests "*DecoderBench*" -i         # scenario matrix + ablations
 BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats (the D-8 question)
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees
 DIAG=1  ./gradlew :core:test --tests "*FileGateDiagnostic*" -i   # which file-path guard declined, and what it cost
 DIAG=1  ./gradlew :core:test --tests "*ResidualDiagnostic*" -i   # which stage the remaining error comes from
+DIAG=1  ./gradlew :core:test --tests "*ScaleErrorDiagnostic*" -i # what can and cannot see a wrong timebase
 ```
 
 Benches assert nothing and are skipped unless their env var is set. They are instruments,
@@ -129,9 +130,12 @@ interchangeable — see the caveat in `version-history.md`. All six milestones o
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 
-Open High defects: `known-issues.md` D-1, D-2, D-6, D-8, D-9, plus risks G-1 and G-2. The
-ordered plan — what is cheap, what is blocked, and what changed the priorities — is in
-`progress.md`.
+Open High defects: `known-issues.md` D-2, D-6, D-8, D-9, plus risks G-1 and G-2. D-1 closed
+with `decisions.md` D-22 — a wrong *timebase* is now flagged by reading the decoded
+characters, because Morse timing is scale-free and no timing score can ever see one. Its
+residual half is D-11. The ordered plan — what is cheap, what is blocked, and what changed
+the priorities — is in `progress.md`; **every remaining step is blocked**, three on owner
+decisions and one on the toolchain.
 
 ## Undecided
 

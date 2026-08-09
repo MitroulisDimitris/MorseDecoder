@@ -3,6 +3,7 @@ package com.morsedecoder.core.decode
 import com.morsedecoder.core.audio.PcmSource
 import com.morsedecoder.core.model.GaussianMixture
 import com.morsedecoder.core.model.KalmanUnit
+import com.morsedecoder.core.model.OutputPlausibility
 import kotlin.math.exp
 import kotlin.math.ln
 
@@ -37,6 +38,18 @@ class MorseDecoder(
         val modelFitQuality: Double,
         /** FR-5.7: speed outside 5-40 WPM — decoded best-effort, targets void. */
         val outOfCalibratedRange: Boolean,
+        /**
+         * D-1: the decoded characters cannot be text — the signature of a unit-scale
+         * error, which no timing score can see because Morse timing is scale-free.
+         * Reported, never acted on; see [OutputPlausibility].
+         */
+        val outputImplausible: Boolean,
+        /**
+         * Mean marks per character over the worst window of the recording, or null if
+         * fewer than [OutputPlausibility.DEFAULT_WINDOW] characters were decoded. Real
+         * text sits near 3.4.
+         */
+        val marksPerChar: Double?,
     )
 
     fun decodeFile(source: PcmSource, toneHzOverride: Double? = null): FileResult {
@@ -162,6 +175,13 @@ class MorseDecoder(
         // exactly 5 or 40 WPM is not flagged by measurement noise alone.
         val outOfRange = kalman.unitMs !in 28.0..255.0
 
+        // D-1: the one check that is not a timing check. File mode decodes the whole
+        // recording against one locked unit (FM-1), so a scale error here is uniform —
+        // the worst window is the honest summary rather than a transient dip.
+        val plausibility = OutputPlausibility()
+        for (c in chars) plausibility.add(c.elements.count { it.isMark })
+        val worst = plausibility.worstMarksPerChar
+
         return FileResult(
             text = text,
             toneHz = fe.toneHz,
@@ -172,6 +192,8 @@ class MorseDecoder(
             wpmTrack = chars.map { Pair(it.tStartMs / 1000.0, 1200.0 / it.unitMsGlobal) },
             modelFitQuality = RobustTimingDecoder.fitQuality(markMix),
             outOfCalibratedRange = outOfRange,
+            outputImplausible = worst != null && worst < OutputPlausibility.DEFAULT_IMPLAUSIBLE_BELOW,
+            marksPerChar = worst,
         )
     }
 
@@ -219,5 +241,7 @@ class MorseDecoder(
         wpmTrack = emptyList(),
         modelFitQuality = 0.0,
         outOfCalibratedRange = false,
+        outputImplausible = false,
+        marksPerChar = null,
     )
 }

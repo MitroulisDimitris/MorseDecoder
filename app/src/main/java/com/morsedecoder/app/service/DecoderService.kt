@@ -60,6 +60,14 @@ class DecoderService : Service() {
         val poorFit: Boolean = false,       // FR-5.8/P-4: fit gate is holding output back
         /** P-4: input implies a speed above the 60 WPM ceiling, so no speed is shown. */
         val speedImplausible: Boolean = false,
+        /**
+         * P-4 / `known-issues` D-1: the decoded characters cannot be text — the signature
+         * of a unit-scale error, which `fitQuality` cannot see because Morse timing is
+         * scale-free. Warns; nothing is suppressed on it (`decisions.md` D-22).
+         */
+        val outputImplausible: Boolean = false,
+        /** Mean marks per committed character behind the flag; real text sits near 3.4. */
+        val marksPerChar: Double? = null,
         // Debug: fit-quality distribution over recent marks, for on-device gate tuning.
         val fitP10: Double = 1.0,
         val fitP50: Double = 1.0,
@@ -315,6 +323,8 @@ class DecoderService : Service() {
             lowSignal = engine.lowSignal,
             poorFit = engine.outputSuppressed,
             speedImplausible = engine.speedImplausible,
+            outputImplausible = engine.outputImplausible,
+            marksPerChar = engine.marksPerChar,
             fitP10 = percentile(fits, 0.10),
             fitP50 = percentile(fits, 0.50),
             fitP90 = percentile(fits, 0.90),

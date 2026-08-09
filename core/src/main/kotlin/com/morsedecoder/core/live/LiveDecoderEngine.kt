@@ -9,6 +9,7 @@ import com.morsedecoder.core.dsp.Spectrum
 import com.morsedecoder.core.model.GaussianMixture
 import com.morsedecoder.core.model.KalmanUnit
 import com.morsedecoder.core.model.ObservationFit
+import com.morsedecoder.core.model.OutputPlausibility
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -180,6 +181,17 @@ class LiveDecoderEngine(
         /** consecutive good-fit marks before emission resumes. */
         val emitResumeAfterMarks: Int = 3,
         // ------------------------------------------------------------------------------
+
+        // ---- Output plausibility (D-1) -----------------------------------------------
+        // The gate above cannot see a unit-scale error: it keys off `fitQuality`, and
+        // Morse timing is scale-free, so a wrong scale leaves every timing score intact.
+        // These two describe the one signal that does see it — the decoded characters
+        // themselves. It reports and never suppresses; see [OutputPlausibility].
+        /** Committed characters the plausibility statistic averages over. */
+        val plausibilityWindowChars: Int = OutputPlausibility.DEFAULT_WINDOW,
+        /** Mean marks per character below which the transcript cannot be real text. */
+        val implausibleMarksPerChar: Double = OutputPlausibility.DEFAULT_IMPLAUSIBLE_BELOW,
+        // ------------------------------------------------------------------------------
     )
 
     enum class LockState { SEARCHING, ACQUIRING, LOCKED, DEGRADED }
@@ -294,6 +306,27 @@ class LiveDecoderEngine(
      * held off the ceiling; [wpm] reads as nothing in both cases, and this says why.
      */
     val speedImplausible: Boolean get() = kalman?.atSpeedCeiling ?: bootstrapTooFast
+
+    /**
+     * P-4 honest failure, the case no timing signal can reach: **the decoded characters
+     * cannot be text** (`known-issues.md` D-1).
+     *
+     * A unit an octave short shatters every character into single elements, and because
+     * Morse timing is scale-free `fitQuality` reads a serene 1.00 throughout — measured at
+     * 297 % CER with `outputSuppressed` false and the lock LOCKED. This is the signal that
+     * notices, and it is deliberately **only** a signal: nothing is suppressed on it. See
+     * [OutputPlausibility] for the measured margin and why it is not a gate.
+     */
+    val outputImplausible: Boolean get() = plausibility.implausible
+
+    /**
+     * Mean marks per committed character over the recent window — the number behind
+     * [outputImplausible]. Null until the window fills; real text sits near 3.4.
+     */
+    val marksPerChar: Double? get() = plausibility.marksPerChar
+
+    /** The threshold in force, exposed so a debug readout can mark it. */
+    val implausibleBelowMarksPerChar: Double get() = plausibility.threshold
     val candidates: List<Double>
         get() = candidateList
             .filter { nowMs() - it.firstSeenMs >= cfg.candidateSustainMs }
@@ -371,6 +404,10 @@ class LiveDecoderEngine(
     private var bootstrapTooFast = false
     private var needResync = true          // FR-4.2: discard a partial leading character
     private val obsFit = ObservationFit()
+    private val plausibility = OutputPlausibility(
+        window = cfg.plausibilityWindowChars,
+        implausibleBelow = cfg.implausibleMarksPerChar,
+    )
     private var poorElements = 0
     private var lastLockChangeMs = -1e12
     /** Consecutive sweeps the current lock has carried signal without keying (D-13). */
@@ -787,6 +824,9 @@ class LiveDecoderEngine(
             gm.weights[0] = 1.0 / 3; gm.weights[1] = 1.0 / 3; gm.weights[2] = 1.0 / 3
         }
         obsFit.clear()
+        // The characters behind the statistic were decoded against the unit just replaced,
+        // so they describe a timebase that no longer exists (D-1).
+        plausibility.clear()
         fitQualityRaw = 1.0
         poorElements = 0
         rebootstraps++
@@ -865,6 +905,7 @@ class LiveDecoderEngine(
             if (cfg.suppressAtSpeedClamp && speedImplausible) continue
             transcript.add(ch)
             charsSinceLock++
+            plausibility.add(ch.elements.count { it.isMark })
             events.add(Event.CharDecoded(ch))
         }
     }
@@ -1098,6 +1139,7 @@ class LiveDecoderEngine(
         bootstrapRuns.clear()
         bootstrapTooFast = false
         obsFit.clear()
+        plausibility.clear()
         fitQualityRaw = 1.0
         poorElements = 0
         outputSuppressed = false

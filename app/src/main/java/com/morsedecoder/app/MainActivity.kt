@@ -186,6 +186,9 @@ private fun MainScreen(p: Palette) {
                             )
                         )
                         if (result.outOfCalibratedRange) append(" · OUTSIDE 5–40 WPM")
+                        // D-1: fit says nothing about a wrong timebase, so the import
+                        // summary would otherwise read "fit 1.00" over single letters.
+                        if (result.outputImplausible) append(" · OUTPUT DOESN'T LOOK LIKE TEXT")
                         append('\n')
                         append(result.text.ifEmpty { "(nothing decodable)" })
                     }
@@ -444,6 +447,14 @@ private fun MainScreen(p: Palette) {
         if (outOfRange) Banner("Outside calibrated range (5–40 WPM) — accuracy targets void", p.bgWarning, p.warning)
         if (state.speedImplausible) Banner(
             "Signal > 60 WPM. Decoding Stopped ",
+            p.bgWarning, p.warning,
+        )
+        // known-issues D-1: the one warning fit cannot produce. A wrong timebase decodes
+        // to single letters at fit 1.00, so this is the only thing on screen that would
+        // say so. Worded as a suggestion because it does not stop the decode — decisions
+        // D-22 keeps it a report, not a gate — and the user's move is to pin the speed.
+        if (state.outputImplausible && !state.lowSignal) Banner(
+            "Output doesn't look like text — the speed estimate may be wrong. Try pinning WPM",
             p.bgWarning, p.warning,
         )
         state.error?.let { Banner(it, p.bgDanger, p.danger) }

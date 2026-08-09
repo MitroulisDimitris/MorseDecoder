@@ -123,6 +123,16 @@ Per P-4 these replace output rather than decorating it:
 - **Bluetooth mic** — persistent warning that decode quality will be degraded
 - **Outside calibrated range** — speed below 5 or above 40 WPM; decoding continues
   best-effort, accuracy targets void
+- **Output doesn't look like text** — the decoded characters average fewer marks than real
+  text can (`known-issues.md` D-1). Decoding continues; the banner suggests pinning WPM
+
+The last two decorate rather than replace, and the second is the deliberate exception to the
+rule above. A wrong *timebase* is invisible to the fit readout — Morse timing is scale-free,
+so `fit` sits at 1.00 while the transcript reads `TEE E EEE EEET` — and this banner is the
+only thing on screen that would say so. It does not stop the decode, because by the time the
+statistic can speak the characters are already emitted and P-2 forbids retracting them, and
+because the margin behind it is measured on synthetic audio only (`decisions.md` D-22).
+Suggesting the fix the user can apply — the WPM pin — is the whole of its job.
 
 ## Settings
 

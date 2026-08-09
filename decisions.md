@@ -811,3 +811,101 @@ fixed and the reported speed is corrected, but the live decode is still worse th
 because of a separate, live-only limitation. The mechanism's real test is a real recording
 (G-1), where the bootstrap is worse than any synthetic and the correction is worth more —
 which is exactly the case the corpus does not yet contain.
+
+---
+
+## D-22 — Output plausibility: the one check that is not a timing check
+
+`known-issues` D-1: a unit an octave short decodes at 297 % CER while `modelFitQuality`
+reports a serene **1.00**, `outputSuppressed` stays false and the lock reads LOCKED. Step 4
+of the plan asked for that state to be visible.
+
+### Why no timing signal can ever do it
+
+Morse timing is **scale-free**. Marks are 1 and 3 units, gaps 1, 3 and 7, and every one of
+those is a ratio. Multiply the unit by two and every ratio survives intact. `fitQuality` is
+cluster separation × ratio plausibility × within-cluster tightness, computed over *normalised*
+durations `ln(duration / unit)` — a uniform `ln 2` shift moves none of the three. The score is
+not broken and no threshold on it will help: it answers "does my two-cluster model fit my own
+measurements", and under a scale error the honest answer really is yes.
+
+This is why D-1 was never a tuning problem, and why the two candidate directions its entry
+listed as timing cross-checks are dead. There is exactly one place the scale-freedom breaks.
+
+### The change
+
+The decoded **characters**. A unit an octave short turns every dash into a run of dots, so
+characters shatter: the transcript becomes `TA C Q TEE E EEE EEET ETTTT`, which is 98.5 %
+`E`/`T`/`I`/`M`. Real text is not. `OutputPlausibility` averages the number of **marks per
+committed character** over a rolling window — near 3.4 on real text, 1.0 when the timebase is
+an octave out — and `LiveDecoderEngine.outputImplausible` / `FileResult.outputImplausible`
+report when it falls below 1.9.
+
+### What the measurement changed about the design
+
+Two things, both refuting the shape the plan had written down.
+
+**The plan named the alphabet distribution ("90 % `E`/`T`/`I`/`M`"). Marks per character is
+the same idea measured better** — a smooth statistic with a natural expected value instead of
+a set-membership count — and it separates slightly wider (whole-transcript: healthy 2.73–3.44
+against 1.02–1.70, versus `etim` healthy 0.148–0.377 against 0.674–0.990).
+
+**The margin is far narrower than the whole-transcript numbers suggest, and a short window
+inverts it.** A live flag judges a rolling window, so what matters is the lowest window a
+healthy decode ever reaches, not its average. Measured by `ScaleErrorDiagnostic` over the 16
+bench scenarios, the same 16 pinned an octave fast, and the non-Morse corpus:
+
+| window | healthy min | scale-error max | margin |
+|---|---|---|---|
+| 16 | 1.13 | 1.19 | **0.95× — inverted** |
+| 24 | 1.71 | 1.29 | 1.32× |
+| 32 | 1.88 | 1.38 | 1.36× |
+| **48** | **2.38** | **1.58** | **1.50×** |
+
+At 16 characters a healthy `hesitation` decode dips *below* a genuine scale error on a rough
+fist. Window length is the whole story and the shape is not: an EWMA of the same nominal
+length gives 1.53× against the boxcar's 1.50×. So the window is **48 committed characters**
+and the threshold **1.9**, the geometric middle of the surviving gap — 1.20× above every
+measured scale error, 1.25× below every measured healthy decode.
+
+The window is long, and that is affordable for a reason worth recording: the failure it
+detects fills the window unusually fast. A scale error emits 3–4× as many characters per
+second as a correct decode (202 against 61 on the same audio), so 48 characters is roughly
+10 s of a broken decode against 35 s of a good one.
+
+### It reports and never suppresses
+
+Deliberate, and the more important half of the decision.
+
+- **The two rows that bind the margin are the two most human fixtures in the corpus** —
+  `hesitation` at 2.38 and `hand-13-rough` at 2.60. That is precisely the population lesson 5
+  of `progress.md` says a synthetically-fitted threshold gets wrong: the D-8 structure gate,
+  fitted to these same rows, lands where it rejects genuine hand-sent Morse and accepts RTTY.
+  A wrong flag is a wrong flag; a wrong *gate* silently deletes a real transmission.
+- **It could not prevent the damage anyway.** By the time 48 characters have been committed
+  the wrong ones are already in the transcript, and P-2 forbids retracting them. The signal
+  can label the state; it cannot stop it.
+
+`HonestFailureTest."a rough fist and a hesitant sender are not flagged as implausible"` holds
+the false-positive side explicitly, on the two binding fixtures.
+
+### Measured
+
+`DecoderBench` **byte-identical on both paths** — live mean 12.3 %, worst 65.8 %, file mean
+6.6 % — as it must be for an additive statistic. On the D-1 reproducer the flag fires at 1.03
+marks per character; on all 16 healthy scenarios and both binding human fixtures it does not.
+Known failures 10 → **9 across 4 defects**: `known-issues` D-1 closes.
+
+### What it does not catch, and what stays open
+
+A unit that is too **long** merges characters rather than shattering them, which moves the
+statistic *up* — 3.73 measured against a healthy maximum of 3.44, inside the same range real
+text occupies. This is a one-sided test and only the fast side is detectable. Of the 2×-slow
+pins, the four that decode badly (74–91 % CER) are invisible to it.
+
+And it says nothing about ordinary wrongness. `hesitation` decodes at 39.2 % CER and
+`qsb-impulse` at 41.8 % with entirely plausible character lengths, `fit 1.00`, and — measured
+here for the first time — mean lattice confidence of **0.978 and 0.990**, higher than the
+0.943 of a `hand-18` decode that is four times more accurate. That is `known-issues` D-11,
+opened by this work: the system still has no signal that correlates with how wrong it is,
+and the obvious candidate is now measured and ruled out.
