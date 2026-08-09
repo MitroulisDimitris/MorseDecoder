@@ -5,8 +5,9 @@ auto-detecting tone frequency and sending speed, tolerant of environmental noise
 human timing variation.
 
 **Status: working app, 12 commits.** Both decode paths are implemented and tested, the
-Compose UI is built, and the whole decoder is covered by a JVM test suite. It has **never
-run on a physical device** — see `known-issues.md` G-2, the largest open risk.
+Compose UI is built, and the whole decoder is covered by a JVM test suite. It has run on an
+**emulator** (2026-08-09, first execution) but **never on real hardware** — see
+`known-issues.md` G-2.
 
 ## Read first
 
@@ -130,7 +131,9 @@ interchangeable — see the caveat in `version-history.md`. All six milestones o
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 
-Open High defects: `known-issues.md` D-2, D-6, D-8, plus risks G-1 and G-2. D-9 closed with
+Open High defects: `known-issues.md` D-2, D-6, D-8, D-12, plus risk G-1. **The app now runs**
+(emulator, 2026-08-09) — G-2 is Medium, and D-12 (the UI can report *Listening* with nothing
+running) came out of that first run. D-9 closed with
 `decisions.md` D-23 — a lock that has decoded nothing for 10 s is handed to a distinct keyed
 signal elsewhere, taking a stranded 612 → 1150 Hz jump from 2 characters to 88. D-1 closed
 with `decisions.md` D-22 — a wrong *timebase* is now flagged by reading the decoded

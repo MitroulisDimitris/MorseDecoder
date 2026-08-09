@@ -34,7 +34,10 @@ error. Four things are true at the same time:
   periodic re-bootstrap — and corrected its reported speed from 21.9 WPM to 15.1 (true 13),
   but it is still not a decode. The live path cannot reach the file's 36.7 % because the
   freeze that buys it (D-19) does not transfer here (N-5).
-- **Nothing has ever run on a phone.** Every result is from unit tests.
+- **It has now run — on an emulator.** First execution 2026-08-09: it launches, takes
+  permissions, runs its service and captures audio. Two defects fell straight out (D-12,
+  D-13) and one worry closed (N-2's device half). A real microphone is still untested, which
+  is the half that matters for an app you point at a radio.
 
 | | first commit | now | source |
 |---|---|---|---|
@@ -398,6 +401,8 @@ is stated and labelled with what it rests on.
 | `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
 | ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
 | `known-issues` D-8 | High | Speech and RTTY decode as Morse; the fit score cannot separate them | 7 (blocked) |
+| `known-issues` D-12 | High | The UI can report *Listening* with no service running — a `publish()` race found on the first device run | — none planned |
+| `known-issues` D-13 | Low | Readouts print values they do not have (`fit 1.00` over `n0`, `snr 0 dB` when idle); `emit` label clipped | — none planned |
 | ~~`known-issues` D-9~~ | FIXED | A tone change mid-session stranded the lock permanently — closed by `decisions.md` D-23. A stalled lock is handed to a distinct keyed signal after 10 s | 5 |
 | `known-issues` D-10 | Medium | Tone readout stays ~76 Hz off after recovering from a wrong lock | — none planned |
 | `known-issues` D-3 | Low | Mains veto costs tone-readout accuracy (~20 Hz), not decoding | — accepted |
@@ -406,7 +411,7 @@ is stated and labelled with what it rests on.
 | ~~**N-3**~~ | FIXED | File path declined a fit it could decode, on an inverted score — closed by `decisions.md` D-18 | 1b |
 | **N-4** (new) | Medium | `DecoderBench` and `HistoryBench` disagreed about `hand-13-rough`; nothing compared them — see lesson 6 | — undecided, see *Decisions needed* 6 |
 | `G-1` | High risk | No real recordings in the test corpus | 7 (blocked) |
-| `G-2` | High risk | Never run on a physical device | 8 (blocked) |
+| `G-2` | Medium risk | **Now run on an emulator**; a real microphone, SAF import, rotation, audio focus and Bluetooth still unexercised | 8 (partly done) |
 | `G-3` | Low | Release builds are unsigned | 9 |
 
 ### N-1 — One glitch sets the whole timebase · FIXED by D-17
@@ -644,7 +649,7 @@ without suppressing (`decisions.md` D-22). No CER change on either path.
 | 5 | The tone-jump deadlock | **done** · this commit (D-23) | small | **A stranded session recovers: 2 chars at 98.4 % CER → 88 at 11.9 %**, consistent across four jump targets, one re-lock each, first transmission untouched. `DecoderBench` identical to its `noStall` ablation. Cost three corrections found by broken tests — the keying test must ignore its own ablation switch, the current lock must be silent (AC-9), and the target must be a sustained candidate not a single sweep. Closes `known-issues` D-9; the re-lock still lands 19–42 Hz off (D-10) | measured (D-23) |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
-| 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
+| 8 | Run it on a device | **partly done** · emulator, this commit | large | **Premise refuted — an AVD was already installed and nothing was blocked.** The app ran for the first time: launch, permissions, foreground service, mic capture and stop all verified. Found `known-issues` **D-12** (UI reports Listening with no service — High) and **D-13**. Closed N-2's device-side worry: `MicCapture` feeds a fixed 80 ms chunk regardless of `getMinBufferSize`. G-2 High → Medium. A real microphone, SAF import, rotation, audio focus and Bluetooth remain | measured |
 | 9 | Signing config | **blocked** · owner decision on keystore location | small | No decode change. `assembleRelease` currently produces an APK that will not install | measured |
 
 **No step here closes `known-issues` D-6.** 6b took the file path to 36.7 %, which is a
@@ -976,9 +981,27 @@ here can start until it is supplied. This gates the D-8 structure gate, which is
 on 6 of 7 non-Morse fixtures, and is deliberately unimplemented until its margins can be
 established against more than one real transmission.
 
-### Step 8 — Run it on a device · blocked on toolchain · `G-2`
+### Step 8 — Run it on a device · **partly done, emulator only** · `G-2`
 
-No `cmdline-tools` and no AVD are configured, so no build of this app has ever executed.
+**The blocker was never real.** An AVD (`Medium_Phone_API_36.1`) and its system image were
+already installed; only `cmdline-tools` is missing, and that provides `sdkmanager` /
+`avdmanager`, which manage SDK packages and are not needed to build, install or run. Like
+step 1b, this entry asserted a premise nobody had checked.
+
+**The app ran for the first time on 2026-08-09** (emulator, API 36). It launches, renders,
+takes both permissions in sequence, runs its foreground service with `types=0x80`, captures
+from the microphone, and stops cleanly — the full table is in `known-issues` G-2, now
+downgraded to Medium.
+
+Two defects came straight out of it, neither reachable from the JVM suite: **D-12**, the UI
+reporting *Listening* with no service running — a `publish()` race that re-asserts the flag
+after `onDestroy` — and **D-13**, readouts printing values they do not have. And **N-2's
+device-side worry is closed**: `MicCapture` feeds a fixed 80 ms chunk regardless of
+`getMinBufferSize`, so the hardware buffer never reaches the decoder at all.
+
+What the emulator cannot answer is the part the app exists for — a real microphone, with a
+real noise floor, pointed at a radio. That plus SAF import, rotation, audio focus and
+Bluetooth routing is the remaining half, and it needs a handset.
 Entirely unexercised: microphone capture and `AudioRecord` buffer sizing (see N-2), the
 foreground service and wakelock, runtime permissions, SAF import through `MediaCodec`,
 audio focus, Bluetooth routing, and every Compose layout at a real screen size.
@@ -1004,8 +1027,10 @@ These block work that is otherwise ready. Listed so they can be answered togethe
    up below and is **not** ready: nobody has supplied the file. It is not in the tree, not in
    git history, and no path for it is documented — the numbers quoted against it throughout
    `known-issues.md` were measured in an earlier session on a machine-local copy.
-3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
-   sideloading to a physical handset.
+3. ~~**Toolchain for device runs** (step 8)~~ — **ANSWERED 2026-08-09: emulator first, then a
+   handset; full G-2 sweep.** The emulator half is done (see step 8). **The question's premise
+   was false** — an AVD and its system image were already installed and nothing was blocked.
+   What remains needs a physical phone attached over USB with debugging enabled.
 4. **Keystore location** (step 9).
 5. **§8 of the requirements is still open** — export-with-audio and practice mode remain
    unspecified.

@@ -583,6 +583,59 @@ place a threshold for this could honestly be set.
 
 ---
 
+## D-12 — The UI can report "Listening" with nothing running · High
+
+Found on the **first ever device run** (2026-08-09, emulator, API 36). The main screen
+shows the green **Listening** indicator with Pause/Stop, every readout dashed, the spectrum
+flat — and `dumpsys activity services` reports **no foreground service at all**. The app
+looks like it is working and decodes nothing, indefinitely. Only Stop-then-Listen (or a
+restart) recovers, and the user has no reason to try either.
+
+The mechanism is in the code rather than the platform, and is visible without a device once
+you know to look for it:
+
+- `DecoderService.publish()` sets **`listening = true` unconditionally** (`DecoderService.kt:317`)
+  on every published snapshot;
+- `publish()` runs on `decodeExecutor`, off the main thread, one task per audio chunk;
+- `onDestroy()` calls `decodeExecutor.shutdown()` — which does **not** cancel already-queued
+  tasks — and only then sets `listening = false` (`DecoderService.kt:443`).
+
+So any `publish()` still in flight when the service dies runs *after* the flag is cleared and
+re-asserts it. `DecoderService.state` is a companion-object `MutableStateFlow` that outlives
+the service, so nothing later corrects it, and `MainActivity` renders Pause/Stop for exactly
+`state.listening` (`MainActivity.kt:256`).
+
+The window is not narrow in practice: audio arrives every 80 ms and Stop is pressed while
+capturing, which is the only time anyone presses it.
+
+Not reproduced on a schedule yet — the screenshot evidence is a stuck state reached after a
+Stop, and the mechanism above is read from the code rather than from an instrumented run. A
+regression test should drive `onStartCommand` → `publish()` → `onDestroy` ordering directly;
+that is JVM-testable once the executor is injectable, which it currently is not.
+
+---
+
+## D-13 — Readouts report values they do not have · Low
+
+Three cosmetic-but-dishonest readings, all seen on the first device run and all the same
+mistake D-5 fixed for `fitQuality`: rendering "no measurement" as a number.
+
+| Readout | Shows when idle | Should be |
+|---|---|---|
+| debug fit strip | `p10 1.00  p50 1.00  p90 1.00  n0` | no percentiles at all with `n0` |
+| `snr` tile | `0 dB` | `—`, as `wpm`/`tone`/`fit` correctly do |
+
+The debug strip is the same "perfect over zero samples" rendering D-5 removed from the main
+`fit` tile, surviving one layer down — and it is the readout `Config.emitFitSuppressBelow`
+is meant to be calibrated against on real audio, so it is the one that most needs to be
+honest.
+
+Separately, the `emit` label in that strip is **clipped and wrapped** to `emi` / `t` at
+1080 px. The accessibility tree carries the full string, so it is a width constraint in the
+row, not a text bug.
+
+---
+
 ## G-1 — No real recordings in the test corpus · High (as a risk)
 
 Every fixture is synthetic. The requirements have flagged this since v1 (§7, "Real
@@ -603,19 +656,54 @@ callsign, `DL4`). A weaker tone-lock-plus-character-count assertion is possible 
 
 ---
 
-## G-2 — Never run on a physical device · High (as a risk)
+## G-2 — Run on an emulator, never on real hardware · Medium (as a risk)
 
-Everything is verified by unit test and compilation only. No AVD and no `cmdline-tools`
-are configured, so no build of this app has ever executed.
+**Downgraded from High on 2026-08-09: the app has now executed.** First run ever, on the
+`Medium_Phone_API_36.1` AVD (API 36, x86_64). The premise this entry carried was also wrong
+— an AVD *and* its system image were already installed; only `cmdline-tools` is missing, and
+that provides `sdkmanager`/`avdmanager`, which manage SDK packages and are not needed to
+build, install or run. Nothing was ever blocked on the toolchain.
 
-Entirely unexercised as a result: microphone capture and `AudioRecord` buffer sizing,
-the foreground service and its wakelock, runtime permissions, SAF import through
-`MediaCodec`, audio-focus handling, Bluetooth mic routing, and every Compose layout at
-real screen sizes.
+**Verified working on the emulator:**
 
-`AudioFileImporter` in particular is unproven against real device output. It assumes
-16-bit PCM from `MediaCodec` (`out.asShortBuffer()`); a device that emits float PCM would
-produce silence rather than an error.
+| Item | Result |
+|---|---|
+| Install, launch, first frame | 3.2 s cold start, no crash |
+| Compose layout at 1080×2400 | renders correctly; one clipped label (D-13) |
+| Runtime permissions | RECORD_AUDIO then POST_NOTIFICATIONS, in sequence; the ungranted state correctly shows Idle rather than pretending to listen |
+| Foreground service | `isForeground=true`, `types=0x80` (microphone), ongoing notification on channel `decoder` |
+| Notification permission denied | FGS still runs — denial does **not** break capture |
+| Microphone capture | live spectrum from the host mic; `AudioFlinger` record thread active |
+| Audio focus | requested at start (`USAGE_MEDIA` — see below) |
+| Stop | tears the foreground service down cleanly |
+
+**`AudioRecord` buffer sizing is answered, and it is a non-issue.** `MicCapture.captureLoop`
+reads a fixed `ShortArray(1280)` — 80 ms — and feeds exactly that to the engine regardless of
+what `getMinBufferSize` returns; the hardware buffer only sizes `AudioRecord`'s internal
+ring. Combined with D-20's chunk-invariance, **N-2's device-side concern is closed**: the
+caller's buffer cannot reach the transcript by either route.
+
+**Found by running it:** `known-issues` **D-12** (the UI can report Listening with no service
+— High) and **D-13** (readouts showing values they do not have). Neither is reachable from the
+JVM suite.
+
+**Still unexercised, and why the risk is not closed:**
+
+- **A real microphone.** An emulator's mic is the host's, with the host's AGC and its own
+  resampling; nothing it reports about capture quality, noise floor or the keying threshold
+  transfers to a phone in a room next to a radio. This is the whole point of the app and it
+  remains untested.
+- **SAF import end to end.** The picker opens; a decode of a pushed WAV was not completed, so
+  `AudioFileImporter` and `MediaCodec` are still unproven. It assumes 16-bit PCM
+  (`out.asShortBuffer()`) and a device emitting float PCM would produce **silence rather than
+  an error**.
+- Rotation and configuration change, the settings screen, audio-focus behaviour under a real
+  interruption (a call, another app), Bluetooth SCO routing, wakelock behaviour with the
+  screen off, and any screen size other than this one.
+
+Audio focus is requested as `USAGE_MEDIA` for a capture-only app, which is worth a look — it
+is the attribute for playback, and a recorder ducking other apps under a media usage is at
+best an odd claim to make to the platform.
 
 ---
 
