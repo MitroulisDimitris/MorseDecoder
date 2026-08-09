@@ -639,7 +639,7 @@ without suppressing (`decisions.md` D-22). No CER change on either path.
 | 4 | Make a scale error visible | **done** · this commit (D-22) | medium | **As predicted: no CER change, a silent wrong answer is now a flagged one.** Marks per committed character over a 48-char window, flagged below 1.9; fires on the D-1 reproducer at 1.03, on none of the 16 healthy scenarios. `DecoderBench` byte-identical. Margin **1.50×**, and it *inverts* at a 16-char window — the long window is the finding. Reports only, never suppresses. Closes `known-issues` D-1; opens D-11 | measured (D-22) |
 | 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
 | 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
-| 5 | The tone-jump deadlock | **blocked** · owner decision on N and the D-7 trade | small | Recovers a session that is currently dead until restarted. One `SessionSequenceTest` known failure (D-9) should start passing. Risk: AC-9 must stay green | derived |
+| 5 | The tone-jump deadlock | **ready** · decided 2026-08-09 | small | Auto re-lock after **10 s** with no committed character *and* a keyed peak elsewhere; the D-7 trade is accepted. Recovers a session that currently yields 2 characters for a whole transmission. One `SessionSequenceTest` known failure (D-9) should start passing. Risks: AC-9 stays green only by the keying conjunction, and the re-lock will land ~40 Hz off tone (D-10) | derived |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
 | 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
@@ -826,14 +826,38 @@ character shapes, `fit 1.00`, and mean lattice confidence **0.978 / 0.990** — 
 0.943 of a `hand-18` decode four times more accurate. That residual was the second half of
 D-1 and is now `known-issues` **D-11**, with its obvious candidate measured and ruled out.
 
-### Step 5 — The tone-jump deadlock · small, but blocked · `known-issues` D-9
+### Step 5 — The tone-jump deadlock · small · **ready** · `known-issues` D-9
 
-Fix is understood and contained: re-lock only if the current lock has produced nothing for
-N seconds **and** a keyed peak exists elsewhere in the band. Safe for AC-9 because silence
-offers no keyed peak. **Needs an owner decision** on N and on whether to accept the D-7
-trade — extending recovery to proven locks means a lock could be taken away during a
-legitimate pause if another station is active. Not started for that reason, not for
-difficulty.
+**Decided 2026-08-09.** Re-lock **automatically** when the current lock has produced nothing
+for **10 s** *and* a peak elsewhere in the band passes D-13's keying test. The owner accepts
+the D-7 trade: a proven lock can now be taken away during a legitimate pause if another
+station is keying at the time.
+
+Safe for AC-9 by conjunction, not by the timer: 30 s of silence offers no keyed peak, so the
+second condition never holds. Note the timer alone would *not* be safe, which is why the
+keying test is load-bearing rather than a formality — 10 s is inside the range a very slow
+Farnsworth sender can leave between words.
+
+Three things measurement says the implementation must get right:
+
+- **The keying test is not the candidate test.** `candidates` (FR-2.14) is 6 dB + 100 Hz +
+  2 s sustain with no keying check, and a probe of a *healthy* 612 Hz decode shows it
+  offering spurious peaks at 1680, 840, 435, 381 and 1017 Hz throughout. Gating on the
+  candidate list would let room noise steal a working lock. Use `keyingSpreadAt` (D-13).
+- **It must count committed characters, not elements.** In the stranded state the front end
+  still produces elements from noise at the dead frequency; `charsSinceLock` is the counter
+  that actually stays put.
+- **Expect to land off-tone.** In the measured jump the candidate readings jitter ±45 Hz
+  around the true 1150 Hz, so the re-lock will acquire ~40 Hz off and `known-issues` D-10
+  says the tracking EMA cannot re-centre from there. The decode should survive — the
+  analysis window is ~100 Hz wide — but the `tone` readout will be wrong, and the D-9 test
+  asserts `abs(toneHz - 1150) < 25`. That assertion may need to move, or D-10 may need to be
+  fixed first; establish which before changing the number.
+
+The measured starting point: a 612 → 1150 Hz jump yields **2 characters** for the whole
+second transmission, the lock sits at 612 Hz in DEGRADED with `lowSignal` true for 75 s, and
+the UI shows "Low signal — decoding stopped", which names the wrong cause. One
+`SessionSequenceTest` known failure (D-9) should start passing.
 
 ### Step 6a — Locate the residual error · **DONE** · `ResidualDiagnostic`
 
@@ -943,8 +967,8 @@ its passwords live is the owner's decision.
 
 These block work that is otherwise ready. Listed so they can be answered together.
 
-1. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
-   be taken away during a legitimate pause.
+1. ~~**D-9 re-lock trade** (step 5)~~ — **ANSWERED 2026-08-09: automatic re-lock, N = 10 s,
+   and the owner accepts the D-7 trade.** Written up in step 5 below; step 5 is now ready.
 2. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
    truth for a recording that is only partly legible.
 3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or

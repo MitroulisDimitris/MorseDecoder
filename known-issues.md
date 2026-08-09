@@ -491,12 +491,21 @@ It is a deadlock between two guards that are each individually correct:
 D-13's dead-end recovery breaks exactly this tie, but was deliberately scoped to locks that
 had **never** decoded anything. This lock had, so it is excluded.
 
-The fix has a real trade-off, which is why it is not already done: extending recovery to
-proven locks means a lock could be taken away during a legitimate pause if another station
-is active elsewhere — precisely the asymmetry D-7 chose to avoid. A defensible shape is
-"re-lock only if the current lock has produced nothing for N seconds **and** a keyed peak
-exists elsewhere in the band", which stays safe for AC-9 because silence offers no keyed
-peak. Needs a decision on N and on whether to accept the D-7 trade at all.
+**The fix is decided (2026-08-09), not yet built.** Re-lock automatically when the current
+lock has produced no committed character for **10 s** *and* a peak elsewhere in the band
+passes D-13's keying test. The owner has accepted the D-7 trade this carries: a proven lock
+can be taken away during a legitimate pause if another station happens to be keying —
+precisely the asymmetry D-7 chose to avoid.
+
+AC-9 stays safe by the conjunction rather than by the timer. 30 s of silence offers no keyed
+peak, so the second condition never holds; the timer alone would not be safe, because 10 s is
+inside the range a very slow Farnsworth sender leaves between words.
+
+The keying test is load-bearing and is **not** the candidate test: FR-2.14 candidacy is
+6 dB + 100 Hz + 2 s sustain with no keying check, and a probe of a healthy 612 Hz decode
+shows spurious candidates at 1680, 840, 435 and 1017 Hz throughout, any of which would
+otherwise be able to steal a working lock. Implementation notes and the measured stranded
+state are in `progress.md` step 5.
 
 ---
 
