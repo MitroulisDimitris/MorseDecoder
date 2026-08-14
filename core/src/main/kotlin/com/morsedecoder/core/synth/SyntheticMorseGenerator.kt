@@ -65,6 +65,14 @@ object SyntheticMorseGenerator {
         val leadInMs: Double = 250.0,
         val tailMs: Double = 250.0,
         val seed: Long = 1L,
+        /**
+         * Speaker → room → phone-mic path, or null for a signal delivered by wire.
+         *
+         * Null by default and null in every fixture that predates it, so the whole existing
+         * corpus is byte-identical — the numbers in `version-history.md` depend on that.
+         * See [AcousticChannel] for what this models and why the corpus needed it.
+         */
+        val acoustic: AcousticChannel.Config? = null,
     )
 
     enum class ElementKind { MARK_DOT, MARK_DASH, GAP_INTRA, GAP_INTER, GAP_WORD }
@@ -177,7 +185,9 @@ object SyntheticMorseGenerator {
         val sr = config.sampleRate
         val totalMs = tMs + config.tailMs
         val n = (totalMs * sr / 1000.0).roundToInt()
-        val samples = FloatArray(n)
+        // `var` because the acoustic channel below returns filtered copies rather than
+        // mutating; it is the only stage that does, the rest are in place.
+        var samples = FloatArray(n)
 
         val rampN = (config.riseFallMs * sr / 1000.0).roundToInt().coerceAtLeast(1)
         val omega = 2.0 * PI * config.toneHz / sr
@@ -207,6 +217,10 @@ object SyntheticMorseGenerator {
             }
         }
 
+        // Speaker → room → microphone. Ahead of the noise because room noise is additive at
+        // the microphone, not at the source, and the reverb tail must not be applied to it.
+        config.acoustic?.let { samples = AcousticChannel.room(samples, sr, it) }
+
         // Broadband white noise at the requested SNR (key-down tone power reference).
         val toneRms = config.amplitude / sqrt(2.0)
         if (config.snrDb != null) {
@@ -230,6 +244,11 @@ object SyntheticMorseGenerator {
                 }
             }
         }
+
+        // Capture AGC, last: it rides whatever actually reached the microphone, noise
+        // floor included. That interaction is the point — the gain climbs during key-up and
+        // lifts the floor toward the keying threshold.
+        config.acoustic?.let { samples = AcousticChannel.capture(samples, sr, it) }
 
         // hard clip guard
         for (i in samples.indices) samples[i] = samples[i].coerceIn(-1f, 1f)
