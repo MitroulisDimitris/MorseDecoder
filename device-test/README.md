@@ -75,7 +75,8 @@ All commands are for **Git Bash**, from the repository root.
    `mean CER` lines at the end. With Python, the phone's own log scores the same way:
    `python tools/score-device.py device-test/run device-test/clips/truth.tsv`
 
-8. **Record the result** in `version-history.md` against the commit you ran.
+8. **Record the result** in `TEST-STATUS.md` (it shows how — `REAL_REPORT` writes the
+   per-clip table for you) and in `version-history.md` against the commit you ran.
 
 ## The clips
 

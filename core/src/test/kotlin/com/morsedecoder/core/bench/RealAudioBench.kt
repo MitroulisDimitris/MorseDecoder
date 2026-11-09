@@ -16,6 +16,7 @@ import java.io.File
  *   REAL_DIR=/path/to/clips gradlew :core:test --tests "*RealAudioBench*" -i
  *   REAL_CHUNK=4096 ...      # feed size for the live path (default 1280 = the app's)
  *   REAL_CASES=other.tsv ... # case list, relative to REAL_DIR (default cases.tsv)
+ *   REAL_REPORT=table.md ... # also write a markdown table, for TEST-STATUS.md
  *
  * The case list is tab-separated, `<wav path relative to REAL_DIR>\t<reference text>`;
  * an empty reference reports CER as n/a. `#` lines are comments. WAVs are read as-is, so
@@ -81,6 +82,11 @@ class RealAudioBench {
         println("\nREAL-AUDIO BENCH  dir=$dir  live chunk=$chunk")
         println("%-34s %-4s %6s %6s %6s %5s  %s".format("file", "path", "CER%", "tone", "wpm", "chars", "decoded / notes"))
         val totals = mutableMapOf<String, MutableList<Double>>()
+        // Markdown rows for TEST-STATUS.md: one row per clip, live (the app's path) first.
+        val report = StringBuilder(
+            "| clip | live CER | file CER | live tone Hz | live WPM | live decoded (start) |\n" +
+                "|---|---|---|---|---|---|\n",
+        )
         for (line in cases) {
             val parts = line.split('\t')
             val path = parts[0]
@@ -88,7 +94,14 @@ class RealAudioBench {
             val wavFile = File(dir, path)
             if (!wavFile.exists()) { println("%-34s missing".format(path.takeLast(34))); continue }
             val wav = WavIo.read(wavFile)
-            for ((p, r) in listOf("file" to file(wav.samples, wav.sampleRate), "live" to live(wav.samples, chunk))) {
+            val runs = listOf("file" to file(wav.samples, wav.sampleRate), "live" to live(wav.samples, chunk))
+            fun cerOf(r: Run) = if (ref.isBlank()) "—" else "%.1f %%".format(TextMetrics.cer(norm(ref), norm(r.text)) * 100)
+            val lv = runs[1].second
+            report.append("| %s | %s | %s | %.0f | %s | `%s` |\n".format(
+                File(path).nameWithoutExtension, cerOf(lv), cerOf(runs[0].second), lv.tone,
+                lv.wpm?.let { "%.1f".format(it) } ?: "—",
+                lv.text.take(40).ifBlank { "(nothing)" }.replace("|", "/")))
+            for ((p, r) in runs) {
                 val cer = if (ref.isBlank()) Double.NaN else TextMetrics.cer(norm(ref), norm(r.text))
                 if (!cer.isNaN()) totals.getOrPut(p) { mutableListOf() }.add(cer)
                 println("%-34s %-4s %6s %6.0f %6s %5d  %s  %s".format(
@@ -99,6 +112,12 @@ class RealAudioBench {
         }
         for ((p, v) in totals) {
             println("mean CER %-4s %5.1f %%   worst %5.1f %%   n=%d".format(p, v.average() * 100, v.max() * 100, v.size))
+        }
+        System.getenv("REAL_REPORT")?.let { out ->
+            val mean = { p: String -> totals[p]?.let { "%.1f %%".format(it.average() * 100) } ?: "—" }
+            report.append("| **mean** | **${mean("live")}** | **${mean("file")}** | | | |\n")
+            File(out).writeText(report.toString())
+            println("report written to $out")
         }
     }
 }
