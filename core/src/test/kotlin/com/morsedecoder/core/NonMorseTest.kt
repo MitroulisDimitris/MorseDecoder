@@ -119,9 +119,15 @@ class NonMorseTest {
         assertTrue(fileChars(audio) <= quiet) { "file emitted ${fileChars(audio)} characters from clipped audio" }
     }
 
-    /** Room sound over a hum, and music under noise. Measured today: 22 and 50 live. */
+    /**
+     * Room sound over a hum, and music under noise. Was 22 and 50 live characters.
+     *
+     * Fixed by the steadiness output hold (`LiveDecoderEngine.Config.steadyLowSignal`):
+     * speech locked over hum has a ragged on level, so nothing is emitted. Ablated, with
+     * only that switch off, speech+hum emits 12; with only it on, 0. music+noise was
+     * already 0 before the change.
+     */
     @Test
-    @KnownFailure("D-8", "mixed room audio decodes as Morse")
     fun `mixed everyday room audio decodes to nothing`() {
         val corpus = NonMorseAudio.corpus().toMap()
         for (name in listOf("speech+hum", "music+noise")) {

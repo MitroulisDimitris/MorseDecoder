@@ -3,14 +3,17 @@ package com.morsedecoder.app.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.IBinder
 import android.os.PowerManager
+import com.morsedecoder.app.MainActivity
 import com.morsedecoder.app.audio.MicCapture
 import com.morsedecoder.core.export.CutNumbers
 import com.morsedecoder.core.export.SessionRecorder
@@ -98,6 +101,9 @@ class DecoderService : Service() {
     companion object {
         private const val CHANNEL_ID = "decoder"
         private const val NOTIFICATION_ID = 1
+
+        /** Stop from the notification: the only control reachable once the UI is gone. */
+        private const val ACTION_STOP = "com.morsedecoder.app.STOP"
 
         val state = MutableStateFlow(UiState())
         val stateFlow: StateFlow<UiState> get() = state
@@ -216,7 +222,17 @@ class DecoderService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForeground(NOTIFICATION_ID, buildNotification())
+
+        // A second start while a session is running must not build a second capture on
+        // top of the first: the old AudioRecord would be dropped unreleased and would go
+        // on holding the microphone for the life of the process. Nothing to do here — the
+        // session already running is the session that was asked for.
+        if (mic != null) return START_NOT_STICKY
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "morsedecoder:decode").apply {
@@ -227,10 +243,10 @@ class DecoderService : Service() {
         requestAudioFocus()
 
         engine = LiveDecoderEngine()
-        // Graph bounds are a persisted user setting; a service restarted by the system
-        // (START_STICKY) must come back with them applied, not with the defaults. A live
-        // narrowing is deliberately *not* restored — every session starts searching the
-        // full graph, so yesterday's narrowing cannot silently hide today's signal.
+        // Graph bounds are a persisted user setting, so each session loads them rather
+        // than taking the defaults. A live narrowing is deliberately *not* restored —
+        // every session starts searching the full graph, so yesterday's narrowing cannot
+        // silently hide today's signal.
         com.morsedecoder.app.Settings.load(this)
         graphMinHz = com.morsedecoder.app.Settings.graphMinHz.value
         graphMaxHz = com.morsedecoder.app.Settings.graphMaxHz.value
@@ -248,10 +264,13 @@ class DecoderService : Service() {
             it.assistLexicon = lexiconOn
             it.assistCutNumbers = cutNumbersOn
         }
+        debugTap = DebugTap.create(this)
+        val tap = debugTap
         val capture = MicCapture(
             onAudio = { samples, count ->
                 val copy = samples.copyOf(count)
                 decodeExecutor.execute {
+                    tap?.audio(copy, count)
                     engine.feed(copy, count)
                     publish()
                 }
@@ -259,15 +278,25 @@ class DecoderService : Service() {
             onError = { message ->
                 state.value = state.value.copy(error = message, paused = true)
             },
+            sourceOverride = tap?.audioSourceOverride,
         )
-        mic = capture
+        // Held only once the capture is actually running: this field is what the guard
+        // above reads to decide a session exists, so a failed start must not set it.
         if (!capture.start()) {
             stopSelf()
             return START_NOT_STICKY
         }
+        mic = capture
         state.value = UiState(listening = true, bluetoothMic = capture.isBluetoothScoRoute())
-        return START_STICKY
+        // Deliberately not sticky. A microphone service the system killed must not come
+        // back listening on its own with no one there to have asked for it — and on
+        // targetSdk 34+ a system-restarted `microphone` service cannot legally call
+        // startForeground from the background anyway, so the restart would only crash.
+        return START_NOT_STICKY
     }
+
+    /** Device-test instrumentation; null on release builds. See [DebugTap]. */
+    @Volatile private var debugTap: DebugTap? = null
 
     private fun publish() {
         // Fold new engine events into the transcript stream. Characters and re-lock
@@ -286,8 +315,10 @@ class DecoderService : Service() {
                     wpmTrace.add((1200.0 / ev.char.unitMsGlobal).toFloat())
                     if (wpmTrace.size > maxTraceSamples) wpmTrace.removeAt(0)
                     recorder?.addChar(ev.char, engine.toneHz, engine.snrDb)
+                    debugTap?.char(ev.char, engine.nowMs())
                 }
                 is LiveDecoderEngine.Event.Relock -> {
+                    debugTap?.relock(ev)
                     txItems.add(TxItem.Bar(ev.fromHz, ev.toHz, ev.atMs))
                     recorder?.addRelock(
                         ev.atMs, ev.fromHz, ev.toHz,
@@ -301,6 +332,7 @@ class DecoderService : Service() {
                 is LiveDecoderEngine.Event.LowSignal -> Unit // surfaced via state.lowSignal
             }
         }
+        debugTap?.status(engine)
         while (txItems.size > maxTranscriptItems) txItems.removeAt(0)
 
         val fits = engine.recentFits()
@@ -408,25 +440,75 @@ class DecoderService : Service() {
         am.requestAudioFocus(request)
     }
 
+    /**
+     * The ongoing notification is not dismissable and outlives the UI, so it carries both
+     * ways back: tapping it reopens the screen, and Stop ends the session. Without them a
+     * backgrounded session holds the microphone with no control anywhere that reaches it.
+     */
     private fun buildNotification(): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Decoder", NotificationManager.IMPORTANCE_LOW)
         )
+        val open = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val stop = PendingIntent.getService(
+            this, 1,
+            Intent(this, DecoderService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Morse decoder is listening")
+            .setContentText("Using the microphone")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
+            .setContentIntent(open)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+                    "Stop", stop,
+                ).build()
+            )
             .build()
     }
 
-    override fun onDestroy() {
+    /**
+     * The user swiped the app out of recents. NFR-6 keeps a session alive across the
+     * screen going off and the UI going to the background — that is what the service is
+     * for — but closing the app is not backgrounding it, and the microphone has to come
+     * back at that point rather than stay held by a task that no longer exists.
+     *
+     * The release runs here rather than being left to [onDestroy] alone: task removal is
+     * one of the moments the process may be killed outright, and the microphone must
+     * already be handed back by the time that happens.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        releaseAudio()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    /** Give back the microphone, the wakelock and audio focus. Idempotent. */
+    private fun releaseAudio() {
         mic?.stop()
         mic = null
+        val tap = debugTap
+        debugTap = null
+        if (tap != null) decodeExecutor.execute { tap.close() }
         focusRequest?.let {
             (getSystemService(Context.AUDIO_SERVICE) as AudioManager).abandonAudioFocusRequest(it)
         }
-        wakeLock?.release()
+        focusRequest = null
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        releaseAudio()
         decodeExecutor.shutdown()
         // Stop returns to the idle screen (import a file, or start listening again), so
         // the pause flags must not survive into it and re-arm on the next session.

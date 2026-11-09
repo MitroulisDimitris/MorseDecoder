@@ -1,6 +1,7 @@
 package com.morsedecoder.core.live
 
 import com.morsedecoder.core.decode.FrontEnd
+import com.morsedecoder.core.decode.KeyingWeight
 import com.morsedecoder.core.decode.RobustTimingDecoder
 import com.morsedecoder.core.dsp.Goertzel
 import com.morsedecoder.core.dsp.KeyingSpread
@@ -162,6 +163,68 @@ class LiveDecoderEngine(
         /** consecutive good-fit marks before emission resumes. */
         val emitResumeAfterMarks: Int = 3,
         // ------------------------------------------------------------------------------
+
+        // ---- Real-room noise (device captures, 2026-11-09) ---------------------------
+        // Measured on phone captures through the raw mic in a quiet room: room noise is
+        // far burstier than the Gaussian noise every threshold above was reasoned from.
+        // Its envelope spread sits at 40-100 where the low-signal guard expects < 15, and
+        // 29 % of 600 ms probes passed the keying screen. What separates it from a keyed
+        // carrier is steadiness of the on level ([KeyingSpread.steadinessOf]); each switch
+        // below turns one use of that off, for ablation in DecoderBench.
+        /** Keying screen also requires a steady on level (acquisition, dead-end, re-lock). */
+        val steadyKeying: Boolean = true,
+        val lockMaxSteadiness: Double = KeyingSpread.PROBE_MAX_STEADINESS,
+        /**
+         * Hold output while the locked tone's on level over the 10 s floor window is
+         * ragged. On captures: keyed tones <= 2.3, synthetic 95 % QSB <= 2.8, quiet room
+         * >= 5.4. This is what decoded "E E T E" through pauses in a quiet room.
+         *
+         * Deliberately an output gate and not part of [lowSignal]: low signal stops the
+         * element path, and with it the element-counted re-lock (FR-2.10.1), so a wrong
+         * lock between two signals - ragged, but not quiet - would never recover (AC-10).
+         * Elements keep flowing; only characters are held.
+         */
+        val steadyLowSignal: Boolean = true,
+        val lowSignalMaxSteadiness: Double = 4.0,
+        /** Every acquisition sweep, not only the first, must see the peak keyed. */
+        val acquireRequiresKeying: Boolean = true,
+        /**
+         * Peaks are judged against the median power within +/-[localFloorHalfHz] rather
+         * than the band median. Raw-mic room noise is a broad low-frequency hump; against
+         * the band median every bump on it is a "peak", enough to push a real tone out of
+         * the top eight the search considers.
+         */
+        val localPeakFloor: Boolean = true,
+        val localFloorHalfHz: Double = 150.0,
+        /**
+         * A lock that has decoded nothing gives way to a keyed peak elsewhere that beats it
+         * by [relockScoreMargin], after this many consecutive sweeps. 0 disables. Safe for
+         * AC-9 for the same reason the D-13 guards are: it never touches a proven lock,
+         * and silence offers no keyed peak.
+         */
+        val unprovenYieldSweeps: Int = 3,
+        /**
+         * A lock with no peak of its own - sitting on a signal's skirt - re-centres onto a
+         * keyed peak within this many Hz once it has been seen for [recentreSweeps]
+         * sweeps. The tracking clamp ([trackClampHz]) otherwise pins it 20 Hz from where
+         * it started, however close the real tone is: a phone capture locked 645 Hz on room
+         * noise and could only ever reach 665 Hz of a 700 Hz tone.
+         *
+         * Capped at [relockMinDistHz] on purpose. Beyond it the code already treats a peak
+         * as a different signal, and moving there is a re-lock that must be marked
+         * (FR-2.13) and earned by elements (FR-2.10) - a lock with no peak of its own is
+         * also what a genuine signal looks like in a long pause, so a time-based move
+         * further than this could hand the lock to a neighbour. 0 disables.
+         */
+        val recentreMaxHz: Double = 40.0,
+        val recentreSweeps: Int = 5,
+        /**
+         * Remove the keying weight - a constant offset on every mark and gap - before any
+         * model sees the elements ([KeyingWeight], `known-issues.md` D-12). Room echo on a
+         * phone's raw mic took ~20 ms off every mark. false = raw durations, the pre-D-20
+         * behaviour.
+         */
+        val keyingWeight: Boolean = false,
     )
 
     enum class LockState { SEARCHING, ACQUIRING, LOCKED, DEGRADED }
@@ -348,6 +411,30 @@ class LiveDecoderEngine(
     /** Characters emitted under the current lock — zero means it has proven nothing. */
     private var charsSinceLock = 0
 
+    // Envelope history at the lock, for the steadiness half of the low-signal guard.
+    private val envHist = DoubleArray((cfg.floorWindowMs / cfg.hopMs).toInt())
+    private var envHistCount = 0
+    private var envHistIdx = 0
+    private val envHistScratch = DoubleArray(envHist.size)
+    /** The locked tone's on level is ragged: noise, not a keyed carrier. Output is held. */
+    private var raggedEnvelope = false
+    /** True while output is held because the locked tone looks like noise ([Config.steadyLowSignal]). */
+    val noisySignal: Boolean get() = raggedEnvelope
+    private var yieldSweeps = 0
+    // Best band-floor ratio the lock's own peak has shown over the last ~2 s of sweeps:
+    // between characters the lock has no peak at all, and comparing against that instant
+    // would let any weaker station win.
+    private val lockRatioHist = DoubleArray(20)
+    private var lockRatioIdx = 0
+    private var recentreSweepCount = 0
+    private var recentreTarget = 0.0
+    /** Where the current lock was taken. Re-centres are capped against this, not the last hop. */
+    private var lockOriginHz = 0.0
+
+    private val weight = KeyingWeight()
+    /** Current keying-weight correction in ms (added to marks, taken from gaps); 0 when off or not yet estimated. */
+    val weightMs: Double get() = if (cfg.keyingWeight) weight.weightMs else 0.0
+
     private class Candidate(var freqHz: Double, val firstSeenMs: Double, var lastSeenMs: Double, var ratio: Double)
     private val candidateList = ArrayList<Candidate>()
 
@@ -493,6 +580,9 @@ class LiveDecoderEngine(
         }
         val e = g.power(frameScratch, 0)
         envRing.add(e)
+        envHist[envHistIdx] = e
+        envHistIdx = (envHistIdx + 1) % envHist.size
+        if (envHistCount < envHist.size) envHistCount++
         if (!envRing.ready) return
 
         val floor = envRing.p20
@@ -592,7 +682,12 @@ class LiveDecoderEngine(
 
     // ---- element path ----
 
-    private fun handleElement(run: FrontEnd.Run) {
+    private fun handleElement(rawRun: FrontEnd.Run) {
+        // The weight is estimated from every element, including those resync discards, so
+        // it is usually ready by the time the bootstrap needs it; the bootstrap keeps raw
+        // runs and corrects them with the estimate current when it fires.
+        if (cfg.keyingWeight) weight.observe(rawRun)
+        val run = if (cfg.keyingWeight) weight.correct(rawRun) else rawRun
         val unit = kalman?.unitMs ?: 60.0
         if (needResync) {
             // FR-4.2: drop everything up to the first clear boundary gap so a partial
@@ -644,7 +739,7 @@ class LiveDecoderEngine(
 
         val dec = decoder
         if (dec == null) {
-            bootstrapRuns.add(run)
+            bootstrapRuns.add(rawRun)
             if (bootstrapRuns.count { it.isMark } >= cfg.bootstrapMinMarks) initFromBootstrap()
         } else {
             dec.feed(run)
@@ -654,6 +749,11 @@ class LiveDecoderEngine(
 
     /** Streaming bootstrap (FR-5.1 role): first elements seed the models, then flow on. */
     private fun initFromBootstrap() {
+        if (cfg.keyingWeight) {
+            val corrected = bootstrapRuns.map { weight.correct(it) }
+            bootstrapRuns.clear()
+            bootstrapRuns.addAll(corrected)
+        }
         val marks = bootstrapRuns.filter { it.isMark }.map { ln(it.durationMs) }
         var c1 = marks.min()
         var c2 = marks.max()
@@ -733,6 +833,9 @@ class LiveDecoderEngine(
             // information about correctness in that overlap. Only the clamp does, because
             // it means the estimator stopped measuring.
             if (cfg.suppressAtSpeedClamp && speedImplausible) continue
+            // Noise at the lock, not a keyed carrier (steadiness test). Dropped like the fit
+            // gate drops: never emitted, and it does not count as the lock proving itself.
+            if (raggedEnvelope) continue
             transcript.add(ch)
             charsSinceLock++
             events.add(Event.CharDecoded(ch))
@@ -756,7 +859,9 @@ class LiveDecoderEngine(
                 }
             }
             LockState.ACQUIRING -> {
-                val hit = peaks.firstOrNull { abs(it.freqHz - acqFreq) < 20.0 }
+                val hit = peaks.firstOrNull {
+                    abs(it.freqHz - acqFreq) < 20.0 && (!cfg.acquireRequiresKeying || isKeyed(it.freqHz))
+                }
                 if (hit != null) {
                     acqFreq = 0.7 * acqFreq + 0.3 * hit.freqHz
                     if (++acqHits >= cfg.acquireSweeps) lockOn(acqFreq)
@@ -773,6 +878,27 @@ class LiveDecoderEngine(
                     candidateList.clear()
                     unkeyedSweeps = 0
                     return
+                }
+                updateRaggedEnvelope()
+                // A lock that has proven nothing yields to a keyed signal elsewhere rather
+                // than holding the frequency for the full unproven timeout below.
+                val nearNow = peaks.firstOrNull { abs(it.freqHz - toneHz) <= cfg.trackWindowHz }?.ratio ?: 0.0
+                lockRatioHist[lockRatioIdx] = nearNow
+                lockRatioIdx = (lockRatioIdx + 1) % lockRatioHist.size
+                if (cfg.unprovenYieldSweeps > 0 && charsSinceLock == 0) {
+                    val here = maxOf(1.0, lockRatioHist.max())
+                    val better = if (isKeyed(toneHz)) null else peaks.firstOrNull {
+                        abs(it.freqHz - toneHz) >= cfg.relockMinDistHz && allowedLockFreq(it.freqHz) &&
+                            it.ratio > here * cfg.relockScoreMargin && isKeyed(it.freqHz)
+                    }
+                    yieldSweeps = if (better != null) yieldSweeps + 1 else 0
+                    if (yieldSweeps >= cfg.unprovenYieldSweeps) {
+                        yieldSweeps = 0
+                        lockState = LockState.SEARCHING
+                        candidateList.clear()
+                        unkeyedSweeps = 0
+                        return
+                    }
                 }
                 // Dead-end recovery (D-13), part two: a lock that has never decoded
                 // anything is not a lock worth keeping, however quiet its frequency is.
@@ -808,6 +934,9 @@ class LiveDecoderEngine(
                     )
                     toneHz += cfg.trackEmaAlpha * (target - toneHz)
                     rebuildGoertzelIfNeeded()
+                    recentreSweepCount = 0
+                } else {
+                    recentreIfOnSkirt(peaks)
                 }
                 updateCandidates(peaks)
                 autoRelockCheck(peaks, near)
@@ -845,8 +974,19 @@ class LiveDecoderEngine(
         spectrum = snap
 
         val peaks = ArrayList<Peak>()
+        val halfBins = (cfg.localFloorHalfHz / binHz).toInt().coerceAtLeast(4)
+        val localScratch = DoubleArray(2 * halfBins + 1)
         for (b in 1 until power.size - 1) {
-            if (power[b] > floor * 3.0 && power[b] >= power[b - 1] && power[b] >= power[b + 1]) {
+            if (power[b] < power[b - 1] || power[b] < power[b + 1]) continue
+            val ref = if (cfg.localPeakFloor) {
+                val from = maxOf(0, b - halfBins)
+                val to = minOf(power.size - 1, b + halfBins)
+                val n = to - from + 1
+                System.arraycopy(power, from, localScratch, 0, n)
+                java.util.Arrays.sort(localScratch, 0, n)
+                max(localScratch[n / 2], 1e-18)
+            } else floor
+            if (power[b] > ref * 3.0 && power[b] > floor * 3.0) {
                 val la = ln(max(power[b - 1], 1e-30))
                 val lb = ln(max(power[b], 1e-30))
                 val lc = ln(max(power[b + 1], 1e-30))
@@ -855,6 +995,8 @@ class LiveDecoderEngine(
                 peaks.add(Peak((lo + b + delta) * binHz, power[b] / floor, power[b]))
             }
         }
+        // The local floor only decides what counts as a peak. Ranking stays by power, and
+        // the ratio stays against the band floor, so two real signals compare as before.
         return peaks.sortedByDescending { it.power }.take(8)
     }
 
@@ -865,7 +1007,51 @@ class LiveDecoderEngine(
      */
     private fun isKeyed(freqHz: Double): Boolean {
         if (!cfg.requireKeyingToLock) return true
-        return keyingSpreadAt(freqHz) >= cfg.lockKeyingSpread
+        if (keyingSpreadAt(freqHz) < cfg.lockKeyingSpread) return false
+        if (!cfg.steadyKeying) return true
+        // probeScratch still holds the probe keyingSpreadAt just filled.
+        return KeyingSpread.steadinessOf(probeScratch, sampleRate, freqHz) <= cfg.lockMaxSteadiness
+    }
+
+    /** Low-signal guard, steadiness half: is the locked tone's on level noise-ragged? */
+    private fun updateRaggedEnvelope() {
+        if (!cfg.steadyLowSignal || !envRing.ready || envHistCount < envHist.size / 4) {
+            raggedEnvelope = false
+            return
+        }
+        val n = envHistCount
+        val start = if (n < envHist.size) 0 else envHistIdx
+        for (i in 0 until n) envHistScratch[i] = envHist[(start + i) % envHist.size]
+        val steadiness = KeyingSpread.steadinessOf(envHistScratch, n, envRing.p20, envRing.p95, cfg.hopMs)
+        raggedEnvelope = steadiness > cfg.lowSignalMaxSteadiness
+    }
+
+    /**
+     * A lock with no peak of its own re-centres onto a nearby keyed one
+     * ([Config.recentreMaxHz]). Same signal, so the timing model is kept and no re-lock is
+     * marked; only the frequency and the tracking anchor move.
+     */
+    private fun recentreIfOnSkirt(peaks: List<Peak>) {
+        if (cfg.recentreMaxHz <= 0.0) return
+        val target = peaks.firstOrNull {
+            val d = abs(it.freqHz - toneHz)
+            // Capped from the lock's origin, so hops cannot chain into a re-lock.
+            d > cfg.trackWindowHz && abs(it.freqHz - lockOriginHz) <= cfg.recentreMaxHz &&
+                allowedLockFreq(it.freqHz) && isKeyed(it.freqHz)
+        }
+        if (target == null) {
+            recentreSweepCount = 0
+            return
+        }
+        val same = recentreSweepCount > 0 && abs(target.freqHz - recentreTarget) < 20.0
+        recentreSweepCount = if (same) recentreSweepCount + 1 else 1
+        recentreTarget = target.freqHz
+        if (recentreSweepCount >= cfg.recentreSweeps) {
+            recentreSweepCount = 0
+            toneHz = target.freqHz
+            lockAnchorHz = target.freqHz
+            rebuildGoertzelIfNeeded(force = true)
+        }
     }
 
     /** Envelope spread at [freqHz] over the most recent audio; 0.0 when too little exists. */
@@ -924,6 +1110,10 @@ class LiveDecoderEngine(
     private fun lockOn(freqHz: Double) {
         toneHz = freqHz
         lockAnchorHz = freqHz
+        lockOriginHz = freqHz
+        lockRatioHist.fill(0.0)
+        yieldSweeps = 0
+        recentreSweepCount = 0
         rebuildGoertzelIfNeeded(force = true)
         resetSignalPath()
         lockState = LockState.LOCKED
@@ -939,6 +1129,10 @@ class LiveDecoderEngine(
         events.add(Event.Relock(toneHz, toHz, nowMs(), trigger)) // FR-2.13
         toneHz = toHz
         lockAnchorHz = toHz
+        lockOriginHz = toHz
+        lockRatioHist.fill(0.0)
+        yieldSweeps = 0
+        recentreSweepCount = 0
         rebuildGoertzelIfNeeded(force = true)
         resetSignalPath()
 
@@ -983,6 +1177,10 @@ class LiveDecoderEngine(
 
     private fun resetSignalPath() {
         envRing.clear()
+        weight.reset()
+        envHistCount = 0
+        envHistIdx = 0
+        raggedEnvelope = false
         thresholdNorm = 0f
         envelopeNorm = 0f
         pendingRuns.clear()

@@ -12,13 +12,24 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Microphone capture (FR-1.1): 16 kHz mono PCM16 pushed to [onAudio] as floats.
  *
- * FR-1.2: prefers the UNPROCESSED source; falls back to VOICE_RECOGNITION. Where the
- * device still attaches AGC or noise suppression to the session, both are explicitly
- * disabled — AGC destroys the envelope and NS can gate the tone entirely.
+ * FR-1.2: prefers VOICE_RECOGNITION; falls back to UNPROCESSED. Where the device still
+ * attaches AGC or noise suppression to the session, both are explicitly disabled — AGC
+ * destroys the envelope and NS can gate the tone entirely.
+ *
+ * The order is reversed from the requirement as written, on measurement
+ * (`known-issues.md` D-12, `decisions.md` D-20). On the test phone, UNPROCESSED — and MIC
+ * and CAMCORDER — gate the start of every mark after silence: a dash after a character
+ * gap began 150 ms late and read as a dot, with no effect attached to the session, so
+ * nothing here could switch it off. VOICE_RECOGNITION matched all 154 elements of the same
+ * clip to a constant 7.5 ms, and decoded it at 0 % CER. It is also the source Android's
+ * compatibility rules oblige to run without AGC or noise reduction, which is the property
+ * FR-1.2 exists to get; UNPROCESSED is optional and evidently not always what it says.
  */
 class MicCapture(
     private val onAudio: (FloatArray, Int) -> Unit,
     private val onError: (String) -> Unit,
+    /** Debug builds only (DebugTap): try this `MediaRecorder.AudioSource` first. */
+    private val sourceOverride: Int? = null,
 ) {
     companion object {
         const val SAMPLE_RATE = 16_000
@@ -43,13 +54,13 @@ class MicCapture(
         val bufBytes = maxOf(minBuf, SAMPLE_RATE / 4 * 2) // >= 250 ms
 
         var rec = AudioRecord(
-            MediaRecorder.AudioSource.UNPROCESSED,
+            sourceOverride ?: MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes
         )
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             rec.release()
             rec = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.UNPROCESSED,
                 SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes
             )
         }
@@ -107,16 +118,24 @@ class MicCapture(
         return device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
     }
 
+    /**
+     * Hand the microphone back. Safe to call twice, and safe to call from the service's
+     * teardown path, where it has to complete before the process may be killed.
+     *
+     * The hardware is stopped *before* the capture thread is joined: a thread parked
+     * inside `read()` returns at once instead of a buffer period later, so the release
+     * is immediate rather than merely eventual. `running` is already false by then, so
+     * the short read the stop provokes cannot reach the FR-1.6 error report.
+     */
     fun stop() {
         running.set(false)
+        val rec = record
+        record = null
+        if (rec != null) runCatching { rec.stop() }
         thread?.join(1_000)
         thread = null
         agc?.release(); agc = null
         ns?.release(); ns = null
-        record?.let {
-            runCatching { it.stop() }
-            it.release()
-        }
-        record = null
+        rec?.release()
     }
 }

@@ -17,6 +17,28 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ---
 
+## Update — 2026-11-09: first runs on a real phone
+
+**Read this before the 2026-08-05 summary below; it is older than what it describes.**
+
+The app has now run on a phone (Android 16), driven over USB by `tools/device-run.sh`
+with the PC's loudspeaker playing ten generated clips (`PhoneClipsTool`). The first runs
+were bad — ~84–98 % CER — and two causes were found and fixed:
+
+- **Room noise looked like Morse to the tone lock** (`decisions.md` D-19). Fixed with a
+  steadiness test calibrated on real captures. Replayed captures: quiet room silent, tone
+  right in nearly every clip, automatic re-locks 13 → 5, `DecoderBench` worst case
+  89.9 → 74.7 %, nothing worse.
+- **The phone's UNPROCESSED mic swallowed the start of every mark** (`decisions.md` D-20,
+  `known-issues.md` D-12). Fixed by capturing from VOICE_RECOGNITION. On the four clips run
+  since: clip 01 11.1 %, clip 02 17.0 % — level with a perfect file — quiet room silent.
+
+Every number from the device is reproducible on the JVM: a debug build dumps exactly what
+the mic fed the engine, and `RealAudioBench` replays the dumps bit-for-bit. **The first
+open step is a complete device run on the new source**, which gives the clean capture set
+all later decoder work should be measured against. `HistoryBench` was not run for these
+changes (it lives outside the repo, decision 6).
+
 ## Where we are — 2026-08-05
 
 Fifteen commits over eight days. Both decode paths exist and work, the app builds, and the
@@ -279,6 +301,27 @@ the per-character shrunk least-squares fit, is the natural source and already ex
 **Consequence.** 6b moves from blocked to ready and is the next step. The decisions list
 loses its newest entry, which is the right outcome for a question the specification had
 already settled.
+
+### 15 · *(this commit)* — first device runs: noise guards, mic source, device harness
+
+**Problem.** The first run on a real phone decoded at ~84–98 % CER, and nothing in the
+suite could have predicted it: every fixture is synthetic, and the failures came from the
+room and the phone.
+
+**What changed.** A device harness (`DebugTap` in debug builds, `tools/device-run.sh`,
+`tools/score-device.py`, `RealAudioBench`, `NoiseFloorDiagnostic`, `PhoneClipsTool`), the
+D-19 noise guards on the live path, the D-20 switch to VOICE_RECOGNITION, and the
+`KeyingWeight` correction built but off. Also carried: the session-lifecycle fixes that
+were already in the working tree (close ends the session, Stop from the notification, no
+second capture on a second start) and three more `ResidualDiagnostic` rows.
+
+**Tests.** Green; known failures D-6, D-8 ×5, D-9 and the new D-11. D-8's mixed-room test
+and D-10's test now pass — the first for a real reason, the second by avoidance, both
+recorded. AC-10's original assertion runs with two of the new guards off; the default
+behaviour has its own test. See `decisions.md` D-19 for every test that changed and why.
+
+**Consequence.** Step 0 (a full device run on the new source) is first in the plan. D-12
+is fixed on the test phone; D-11 is new and Low; D-10 needs a new reproducer (step 10).
 
 ---
 
@@ -546,6 +589,7 @@ needs no decision, only care.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
+| **0** | ***(new, 2026-11-09 — do first)* Record the full device capture set on VOICE_RECOGNITION** | **to do · first** | small (~15 min, needs the phone) | No code change. Confirms D-20 across all ten clips, not four, and produces the **reference capture set** every later decoder change should be replayed against — the existing captures were made through UNPROCESSED and have D-12 baked in. Procedure below the table | measured (4 of 11 clips so far) |
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
 | 2 | Decouple the decode from buffer size | ready | small | No CER improvement expected at all. Removes a **19-point** spread on `hand-13-rough` that is an artefact of the harness, so later live-path comparisons mean something. `clean-20` should stop moving 2.5 % ↔ 6.3 % with chunk size, and the seeded unit stop varying 53–68 ms. **Weaker than it looks:** D-17 already took this from 67 points to 19 without touching the cause | measured (N-2, re-run 08-04) |
@@ -559,6 +603,29 @@ needs no decision, only care.
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
 | 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
 | 9 | Signing config | **blocked** · owner decision on keystore location | small | No decode change. `assembleRelease` currently produces an APK that will not install | measured |
+| 10 | *(new, 2026-11-09)* Find a new reproducer for `known-issues` D-10 | **to do** · owner asked to keep it on the list | small | No behaviour change. The old fixture passes by avoidance since `decisions.md` D-19; D-10's remaining case — a lock that **has** decoded, sitting more than 40 Hz from the real tone — has no test holding it. Candidate fixtures: a non-ragged noise lock (the steady fading carrier of D-11 is one) followed by Morse 50–80 Hz away; or a phone capture where that happens | derived |
+
+### Step 0 — procedure
+
+On any machine with the repo, Android platform-tools and a phone on USB:
+
+1. `PHONE_CLIPS_OUT=<clips> ./gradlew :core:test --tests "*PhoneClipsTool*"` — writes the
+   ten clips, a 30 s silent clip, `truth.tsv` and `cases.tsv`. Deterministic: byte-identical
+   to the clips used on 2026-11-09.
+2. `./gradlew :app:assembleDebug` and `adb install -r app/build/outputs/apk/debug/app-debug.apk`
+   — must be a **debug** build; the capture dump and event log are inert in release.
+3. Phone unlocked, 30–50 cm from the speakers, normal volume, quiet room; no
+   `audio_source_*` marker left in the app's files directory (so the default source runs).
+4. `tools/device-run.sh <clips>/run <clips>/*.wav` — about 15 minutes for the set. Plays
+   each clip, saves the app's log, a screenshot and the mic dump per clip. Playback uses
+   PowerShell, so on a non-Windows machine swap that one line for `aplay`/`afplay`.
+5. Score what the phone did: `python tools/score-device.py <clips>/run <clips>/truth.tsv`.
+6. Replay on the JVM, which must match step 5:
+   `REAL_DIR=<clips> ./gradlew :core:test --tests "*RealAudioBench*" -i`.
+
+Record the result in `version-history.md` against this commit. To compare mic sources on a
+new phone, create `audio_source_MIC` (or `_CAMCORDER`, `_UNPROCESSED`,
+`_VOICE_RECOGNITION`) in `/sdcard/Android/data/com.morsedecoder.app/files/` before a run.
 
 **No step here closes `known-issues` D-6.** 6b takes the file path to 36.7 %, which is a
 large improvement and still not "decoded". 6a measured the floor this architecture reaches

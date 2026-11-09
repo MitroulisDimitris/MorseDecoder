@@ -183,16 +183,17 @@ class SessionSequenceTest {
     }
 
     /**
-     * After recovering from a lock taken on room noise, the tracker should end up on the
-     * actual tone. Measured today: it settles **~76 Hz low** and stays there.
+     * After a lock taken on room noise, the tracker should end up on the actual tone.
      *
-     * Decoding survives — the 10 ms analysis window is about 100 Hz wide, so the keying
-     * envelope comes through anyway — but the `tone` readout and the spectrum lock marker
-     * are wrong, which matters to anyone using them to tune a radio, and the margin
-     * against a genuinely lost lock is far thinner than it looks.
+     * Written as the D-10 reproducer, where it settled ~76 Hz low. It passes since the
+     * real-room noise guards, **but not because D-10 is fixed**: the lock on speech now
+     * emits nothing (its on level is ragged, so output is held), so it never proves itself,
+     * gives way to the keyed tone, and the tone is acquired fresh. The path D-10 describes —
+     * a lock that *has* decoded, recovered onto a skirt more than 40 Hz out — is no longer
+     * reached by this fixture. Kept as a regression test for the path it does exercise;
+     * `known-issues.md` D-10 records the gap.
      */
     @Test
-    @KnownFailure("D-10", "tone readout stays off after a wrong lock")
     fun `the tone readout re-centres after recovering from a noise lock`() {
         val gen = morse(seed = 53L)
         val session = Session()

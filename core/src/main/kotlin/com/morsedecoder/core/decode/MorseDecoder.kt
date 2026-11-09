@@ -15,6 +15,8 @@ import kotlin.math.ln
 class MorseDecoder(
     private val frontEnd: FrontEnd = FrontEnd(),
     private val assists: Assists = Assists(),
+    /** Remove the keying weight before pass 1 ([KeyingWeight], `known-issues.md` D-12). */
+    private val keyingWeight: Boolean = false,
 ) {
 
     /** FR-7: every assist individually toggleable and OFF by default (P-3). */
@@ -41,7 +43,7 @@ class MorseDecoder(
 
     fun decodeFile(source: PcmSource, toneHzOverride: Double? = null): FileResult {
         val fe = frontEnd.process(source, toneHzOverride)
-        val runs = fe.runs
+        val runs = if (keyingWeight) removeWeight(fe.runs) else fe.runs
         val markDurations = runs.filter { it.isMark }.map { it.durationMs }
         if (markDurations.size < 4) return empty(fe.toneHz)
 
@@ -204,4 +206,26 @@ class MorseDecoder(
         modelFitQuality = 0.0,
         outOfCalibratedRange = false,
     )
+
+    /**
+     * The file path's keying-weight correction. Rolling, like the live path, because the
+     * offset moves with the room and the speed; the whole file is available, so runs
+     * before the first estimate take the first estimate rather than none.
+     */
+    private fun removeWeight(runs: List<FrontEnd.Run>): List<FrontEnd.Run> {
+        val kw = KeyingWeight()
+        val w = DoubleArray(runs.size)
+        var first = Double.NaN
+        for ((i, r) in runs.withIndex()) {
+            kw.observe(r)
+            w[i] = if (kw.ready) kw.weightMs else Double.NaN
+            if (first.isNaN() && kw.ready) first = kw.weightMs
+        }
+        if (first.isNaN()) return runs
+        return runs.mapIndexed { i, r ->
+            val wi = if (w[i].isNaN()) first else w[i]
+            val d = if (r.isMark) r.durationMs + wi else r.durationMs - wi
+            r.copy(durationMs = maxOf(1.0, d))
+        }
+    }
 }

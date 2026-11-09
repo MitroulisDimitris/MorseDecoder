@@ -78,6 +78,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Settings.load(this)
+        // A launch is a fresh start of the task; a recreation (rotation, theme change,
+        // an activity restored after the system reclaimed it) carries a state bundle.
+        // Only the former may auto-start listening — see the auto-start effect below.
+        val freshLaunch = savedInstanceState == null
         setContent {
             val p = decoderPalette()
             val dark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -103,22 +107,15 @@ class MainActivity : ComponentActivity() {
                         .background(p.surface0)
                         .safeDrawingPadding() // Android 15+ edge-to-edge
                 ) {
-                    MainScreen(p)
+                    MainScreen(p, freshLaunch)
                 }
             }
         }
     }
 }
 
-/**
- * Process-scoped so the launch auto-start fires once per app start. Activity recreation
- * (rotation, theme change) must not restart a session the user stopped, so this cannot
- * live in `remember` or in saved instance state.
- */
-private var autoStartAttempted = false
-
 @Composable
-private fun MainScreen(p: Palette) {
+private fun MainScreen(p: Palette, freshLaunch: Boolean) {
     val state by DecoderService.stateFlow.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -200,8 +197,11 @@ private fun MainScreen(p: Palette) {
     // the user tap through an idle screen to reach the thing it exists to do. Stop drops
     // back to the idle screen, which is where a file gets imported instead.
     //
-    // The guard is process-scoped, not remembered: a rotation must not re-start a session
-    // the user deliberately stopped, and neither must returning to a stopped screen.
+    // The guard is the launch itself, not a process-scoped flag: closing the app now ends
+    // the session (DecoderService.onTaskRemoved), and a flag surviving in a cached process
+    // would leave the next launch stranded on the idle screen with nothing listening. A
+    // recreation carries a state bundle, so rotation still cannot restart a session the
+    // user deliberately stopped.
     val startListening = {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -212,10 +212,7 @@ private fun MainScreen(p: Palette) {
         else DecoderService.start(context)
     }
     LaunchedEffect(Unit) {
-        if (!autoStartAttempted) {
-            autoStartAttempted = true
-            if (!state.listening) startListening()
-        }
+        if (freshLaunch && !state.listening) startListening()
     }
 
     val scroll = rememberScrollState()

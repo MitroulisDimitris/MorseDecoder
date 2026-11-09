@@ -95,4 +95,96 @@ object KeyingSpread {
 
         return p95 / max(p20, p95 * FLOOR_FRACTION)
     }
+
+    /**
+     * Steadiness ceiling for a 600 ms acquisition probe: a peak is only treated as keyed
+     * when [steadinessOf] is at or below this.
+     *
+     * Calibrated on phone captures (`tools/device-run.sh`, raw `UNPROCESSED` mic, a quiet
+     * room, speaker playback): real keyed tones score median 1.95, room noise median 5.6.
+     * At 3.0 the screen keeps 83 % of keyed probes and admits 5 % of room-noise probes —
+     * spread alone (>= [LOCK_MIN_SPREAD]) admitted 29 %, because room noise is far more
+     * bursty than the Gaussian noise the spread threshold was reasoned from.
+     */
+    const val PROBE_MAX_STEADINESS = 3.0
+
+    /**
+     * How steady the **on** level is, once slow fading is divided out: 1.0 is perfectly
+     * flat, larger is more ragged. Scored on the same Schmitt on/off split as [of].
+     *
+     * The property it measures is the one that separates a keyed carrier from bursty
+     * noise when amplitude spread cannot: a key-down carrier holds one level for the whole
+     * element, while noise crossing a threshold does so at a different, random level every
+     * time. Fading also moves the on level, but slowly, so each on-frame is compared with
+     * the loudest on-frame within ±[halfWindowMs] of it rather than with the whole window —
+     * otherwise 80 % QSB would read as noise.
+     *
+     * Returns 1 / (10th percentile of on-frame / local-max). [Double.MAX_VALUE] when fewer
+     * than 8 frames are on: too little to call steady.
+     */
+    fun steadinessOf(
+        env: DoubleArray,
+        count: Int,
+        p20: Double,
+        p95: Double,
+        hopMs: Double,
+        halfWindowMs: Double = 500.0,
+    ): Double {
+        if (count < 8 || p95 <= 0.0) return Double.MAX_VALUE
+        val onThr = p20 + 0.50 * (p95 - p20)
+        val offThr = p20 + 0.25 * (p95 - p20)
+        val onVal = DoubleArray(count)       // 0 where the key is up
+        var state = false
+        var onCount = 0
+        for (i in 0 until count) {
+            val v = env[i]
+            state = if (state) v > offThr else v > onThr
+            if (state) { onVal[i] = v; onCount++ }
+        }
+        if (onCount < 8) return Double.MAX_VALUE
+        // Sliding maximum of onVal over ±half frames (monotonic deque, O(n)).
+        val half = (halfWindowMs / hopMs).toInt().coerceAtLeast(1)
+        val localMax = DoubleArray(count)
+        val dq = IntArray(count)
+        var head = 0
+        var tail = 0
+        var next = 0
+        for (i in 0 until count) {
+            val hi = minOf(count - 1, i + half)
+            while (next <= hi) {
+                while (tail > head && onVal[dq[tail - 1]] <= onVal[next]) tail--
+                dq[tail++] = next++
+            }
+            while (dq[head] < i - half) head++
+            localMax[i] = onVal[dq[head]]
+        }
+        val ratios = DoubleArray(onCount)
+        var k = 0
+        for (i in 0 until count) if (onVal[i] > 0.0) ratios[k++] = onVal[i] / localMax[i]
+        ratios.sort()
+        val p10 = ratios[(0.10 * (onCount - 1)).toInt()]
+        return if (p10 <= 0.0) Double.MAX_VALUE else 1.0 / p10
+    }
+
+    /** [steadinessOf] for a probe of raw audio, on the same envelope [of] scores. */
+    fun steadinessOf(
+        samples: FloatArray,
+        sampleRate: Int,
+        freqHz: Double,
+        windowMs: Double = 10.0,
+        hopMs: Double = 5.0,
+    ): Double {
+        val win = (windowMs * sampleRate / 1000.0).toInt()
+        val hop = (hopMs * sampleRate / 1000.0).toInt()
+        if (win < 4 || hop < 1) return Double.MAX_VALUE
+        val frames = (samples.size - win) / hop + 1
+        if (frames < 16) return Double.MAX_VALUE
+        val goertzel = Goertzel(sampleRate, freqHz, win)
+        val env = DoubleArray(frames) { goertzel.power(samples, it * hop) }
+        val ranked = env.copyOf()
+        ranked.sort()
+        val p20 = ranked[(0.20 * (frames - 1)).toInt()]
+        val p95 = ranked[(0.95 * (frames - 1)).toInt()]
+        return steadinessOf(env, frames, p20, p95, hopMs)
+    }
 }

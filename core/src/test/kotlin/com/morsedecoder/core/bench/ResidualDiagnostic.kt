@@ -68,6 +68,15 @@ class ResidualDiagnostic {
             drift = SyntheticMorseGenerator.SpeedDrift.LinearRamp(25.0, 60.0), seed = 20L)),
         Case("wobble", Config(text = text, wpm = 18.0, toneHz = 612.0, snrDb = 10.0,
             drift = SyntheticMorseGenerator.SpeedDrift.SineWobble(0.15, 0.05), seed = 21L)),
+        // The remaining file rows with non-zero CER. `qsb-impulse` ships as 0 characters
+        // because `atSpeedCeiling` discards it at the end of pass 2 — a guard this ladder
+        // does not apply, so its row A is the *ungated* decode and will not match
+        // DecoderBench. That mismatch is the point: the guard rides on the same Kalman.
+        Case("hesitation", Config(text = text, wpm = 16.0, toneHz = 612.0, snrDb = 10.0,
+            hesitation = SyntheticMorseGenerator.Hesitation(), seed = 22L)),
+        Case("qsb-impulse", Config(text = text, wpm = 18.0, toneHz = 612.0, snrDb = 8.0,
+            fadingDepth = 0.6, fadingRateHz = 0.15, impulsesPerSecond = 2.0, seed = 23L)),
+        Case("noise-20@-5", Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = -5.0, seed = 14L)),
     )
 
     // ---- ground truth ----------------------------------------------------------------

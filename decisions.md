@@ -586,3 +586,106 @@ guard: pass 1 fits it perfectly (`fitQuality` 1.0000, `u0` 61.8 ms against a tru
 `atSpeedCeiling` discards the result at the end of pass 2. That guard is **right** here —
 ungated the scenario emits 121 characters against 62 sent at 168.4 % CER, exactly the
 confident verbosity D-16 exists to stop. Recorded so it is not mistaken for the same defect.
+
+---
+
+## D-19 — On a real mic, tell noise from Morse by how steady the on level is
+
+**Status:** in force, 2026-11-09. Live path only; the file path is untouched.
+
+**Context.** The first phone run (`tools/device-run.sh`) failed on every clip, and most of
+it was not decoding at all: the app locked onto room noise before the signal started
+(clips 01, 02, 09), stayed on a 422 Hz room component through whole transmissions (04,
+08), decoded `E E T E` through a 30 s pause, and re-locked automatically after playback
+had ended (04, 05, 08, 09). Captures of the exact samples the engine was fed showed why.
+Raw-mic room noise is far burstier than the Gaussian noise the thresholds were reasoned
+from: its 10 s envelope spread is 40–100 at 600–800 Hz where the low-signal guard treats
+anything above 15 as signal, and 29 % of 600 ms probes passed the D-13 keying screen.
+
+**Measured, not chosen.** Candidate statistics were scored on the captures — probes at the
+true tone during playback against the quiet-room capture and every clip's pre-playback
+audio. Spread alone could not separate them at any threshold. What did is the steadiness
+of the **on** level once slow fading is divided out ([KeyingSpread.steadinessOf]): over
+10 s, keyed tones score <= 2.3, synthetic QSB up to 95 % depth <= 2.8, and quiet room
+>= 5.4. Without the fading compensation the same measure would have flagged QSB as noise.
+
+**Decision.** Five changes, each a `LiveDecoderEngine.Config` switch for ablation:
+
+1. `steadyKeying` — the keying screen also requires a steady on level (<= 3.0 on a 600 ms
+   probe): room-noise probes passing fall from 29 % to 5 %.
+2. `acquireRequiresKeying` — every acquisition sweep re-checks keying, not just the first.
+3. `steadyLowSignal` — a ragged on level over 10 s **holds output**. Deliberately not part
+   of `lowSignal`: that stops the element path and with it the element-counted re-lock,
+   and a wrong lock between two signals (AC-10) is ragged but not quiet. A first version
+   that did fold it into `lowSignal` broke AC-10 exactly that way.
+4. `localPeakFloor` — a peak must beat the median within +/-150 Hz as well as the band
+   median, so a broad low-frequency noise hump stops filling the top-eight list. Ranking
+   stays by power: a first version ranked by local contrast, which is arbitrary on
+   noiseless signals and handed the lock to the weaker of two.
+5. `unprovenYieldSweeps` and `recentreMaxHz` — a lock that has decoded nothing gives way
+   to a keyed peak that beats its best level over the last 2 s; and a lock with no peak
+   of its own re-centres onto a keyed one within 40 Hz **of where the lock was taken**.
+   Both caps came from failures: comparing against the instantaneous level let a weaker
+   station win between characters, and an uncapped re-centre walked a lock 94 Hz in
+   40 Hz hops — an unmarked re-lock.
+
+**Invariants.** Silence still cannot re-lock: the yield and the re-centre both need a peak
+that passes the steady keying screen, which a quiet room does not offer, and the
+element-counted re-lock is unchanged. Neither touches a lock that has decoded anything
+beyond the 40 Hz re-centre. Nothing is retracted; held output is never emitted.
+
+**Result.** Phone captures replayed: the quiet room went from a noise lock and 10
+characters to no lock; tone correct in nearly all clips; automatic re-locks 13 → 5, one
+of them clip 08 correctly following its tone change, the rest driven by D-12. Mean CER 100.6 → 87.7 % — most of what is left is D-12.
+Recorder-app recordings, live path: ~76 → ~45 %. `DecoderBench`: no scenario worse, live
+mean 14.9 → 13.9 %, worst case `hand-13-rough` 89.9 → 74.7 %. ARRL broadcasts unchanged
+(<= 0.8 %).
+
+**Costs.** `known-issues.md` D-11 (a randomly fading carrier leaks a few more characters).
+AC-10's original test now runs with switches 3 and 5 off to keep the FR-2.10 path
+covered; the default is asserted separately, including that nothing is emitted from the
+wrong frequency. D-10's test passes by avoidance, which `known-issues.md` D-10 records.
+
+**Calibrated on one phone in one room.** The thresholds have a ~2x margin on that data and
+none measured anywhere else.
+
+---
+
+## D-20 — Capture from VOICE_RECOGNITION; keep the keying-weight correction off
+
+**Status:** in force, 2026-11-09. Reverses the source order FR-1.2 states.
+
+**Context.** With D-19 the live path found the right tone on phone captures and still
+decoded at ~88 % CER. Per-element alignment against ground truth (`known-issues.md` D-12)
+showed the cause: on the test phone the UNPROCESSED input path delays the start of each
+mark by an amount that grows with the preceding silence — ~150 ms after a character gap —
+with no effect attached to the session, so nothing the app controls could turn it off.
+
+**Decision 1 — prefer VOICE_RECOGNITION, fall back to UNPROCESSED.** Measured on one clip
+through four sources (table in D-12): VOICE_RECOGNITION matched all 154 elements to a
+constant 7.5 ms and decoded at 0.0 % (file) / 6.7 % (live), the same as the clip played
+from a perfect file. FR-1.2 asks for UNPROCESSED because it is meant to be free of AGC and
+noise suppression; VOICE_RECOGNITION is the source Android's compatibility rules oblige to
+be free of them, and on this phone it is the one that actually is. Any session effect the
+device still attaches is disabled exactly as before.
+
+**Decision 2 — the keying-weight correction exists but is off.** Before the source was
+found, the plan was to estimate a constant mark/space offset — `w = (intra-character gap −
+dot) / 2`, rolling, on the shortest gap cluster only so that the reasons `decisions.md` D-2
+gives for distrusting gaps do not apply — and remove it before any model sees the elements
+(`KeyingWeight`, `Config.keyingWeight`, `MorseDecoder(keyingWeight)`). On the UNPROCESSED
+captures it helped (live 87.7 → 68.8 %, file 94.9 → 73.9 %; clip 05 236 → 31 %), but the
+offset there was not constant, so it could only partly help. Switched on by default it broke
+nine tests, all the same way: on noise and very weak signals it fits a "weight" that
+reshapes random durations into Morse-like clusters — AC-8 stopped firing at −6 dB, music and
+speech+hum started emitting, the file path decoded speech. With the cause removed at the
+source there is nothing left for it to buy, so it ships off; the switch stays for a device
+where a constant offset remains, and would need a noise guard before it could default on.
+
+**Invariant check.** With the correction off, the unit is still estimated from raw marks
+only (D-2) — nothing changed there.
+
+**Calibrated on one phone.** Another device may gate VOICE_RECOGNITION, or not offer it
+cleanly; `tools/device-run.sh` with the debug `audio_source_<NAME>` marker re-runs this
+comparison on any phone.
+

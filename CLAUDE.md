@@ -5,8 +5,11 @@ auto-detecting tone frequency and sending speed, tolerant of environmental noise
 human timing variation.
 
 **Status: working app, 12 commits.** Both decode paths are implemented and tested, the
-Compose UI is built, and the whole decoder is covered by a JVM test suite. It has **never
-run on a physical device** — see `known-issues.md` G-2, the largest open risk.
+Compose UI is built, and the whole decoder is covered by a JVM test suite. It has run on
+one physical phone (2026-11-09): room noise was fooling the tone lock (`decisions.md` D-19)
+and the phone's UNPROCESSED mic was swallowing the start of every mark (D-20, the app now
+captures from VOICE_RECOGNITION). Device coverage is still partial (G-2), and re-running the
+full clip set on the new source is the first open step in `progress.md`.
 
 ## Read first
 
@@ -78,7 +81,15 @@ BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats 
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees
 DIAG=1  ./gradlew :core:test --tests "*FileGateDiagnostic*" -i   # which file-path guard declined, and what it cost
 DIAG=1  ./gradlew :core:test --tests "*ResidualDiagnostic*" -i   # which stage the remaining error comes from
+REAL_DIR=<dir> ./gradlew :core:test --tests "*RealAudioBench*" -i       # both paths over real audio kept outside the repo
+DIAG_WAV=<a.wav,b.wav> ./gradlew :core:test --tests "*NoiseFloorDiagnostic*" -i  # what room noise looks like to the guards
 ```
+
+**On a phone** (debug build, USB, phone near the PC speakers): `tools/device-run.sh <out> <clip.wav>...`
+plays each clip, collects the app's `MorseBench` log and a dump of exactly what the mic fed
+the engine (`DebugTap`, debug builds only), and `tools/score-device.py <out> <truth.tsv>`
+scores it. Replaying a dump through `RealAudioBench` reproduces the device's decode on the
+JVM, so fixes can be iterated without the phone.
 
 Benches assert nothing and are skipped unless their env var is set. They are instruments,
 not guards — reading two runs side by side is the point.

@@ -303,6 +303,12 @@ flagged, so FR-5.7's best-effort band is untouched.
 
 ## D-8 — Speech and RTTY decode as Morse · High
 
+**Narrowed 2026-11-09, not closed.** Mixed room audio (speech over hum) no longer decodes on
+the live path: the steadiness output hold (`decisions.md` D-19) sees that the locked tone's
+on level is ragged and holds output. Ablated, speech+hum emits 12 characters with only that
+switch off and 0 with it on. Speech alone, RTTY, clipping, knocking on the file path, and
+the `fitQuality` RTTY overlap are all still open, and their tests still fail.
+
 Audio that is not Morse produces invented text. Measured over 20 s fixtures
 (`NonMorseTest`):
 
@@ -440,9 +446,87 @@ Related to **D-3**, where a mains-vetoed frequency settles ~20 Hz off for a diff
 reason. Both suggest the tracking EMA has no mechanism to re-centre once it is off by more
 than the hysteresis window (`trackWindowHz` = 15 Hz).
 
+**Its reproducer no longer reproduces, and the gap is only partly closed** (2026-11-09) —
+the same position D-1 is in. `SessionSequenceTest`'s speech-then-Morse fixture now ends
+0.4 Hz from the true tone, but by avoidance: the lock on speech emits nothing (ragged on
+level, output held), so it never proves itself, gives way to the keyed tone, and that tone
+is acquired fresh (`decisions.md` D-19). Ablated, turning off the yield alone puts it back
+at 953 Hz out. The annotation came off because the test passes; the entry stays because
+what it describes is still possible: a lock that **has** decoded and sits more than 40 Hz
+from the real tone has nothing that re-centres it. D-19's skirt re-centre covers up to 40
+Hz from where the lock was taken, deliberately no further. Needs a new reproducer, or a
+decision that the remaining case is not worth one.
+
+---
+
+## D-11 — A randomly fading carrier leaks more output before the fit gate engages · Low
+
+Introduced by `decisions.md` D-19, recorded as the trade-off it is. `LiveEngineTest`'s
+ambient fixture — a pure tone under a slow random-walk volume — lets 14 characters through
+the fit gate where it used to let 9, against a raw 47; the test allows a quarter of raw
+plus two, 13.75. Across five seeds the gated total went from 39 to 50.
+
+Mechanism, measured: the stricter keying screen refuses this tone for about 5 s longer
+(lock at 8 s instead of 3 s), and the fit gate then happens to take longer to engage. The
+steadiness hold does not help here and should not: a slowly wandering on level is exactly
+what fading looks like, and the fixture scores 2.6 — inside the range real QSB occupies
+(<= 2.8), far from real room noise (>= 5.4). On the real quiet-room capture the same
+change took output from 10 characters to 0.
+
+Not tuned away on purpose: loosening the screen would re-admit real room noise, and the
+remaining leak is a property of the fit gate's engagement speed.
+
+---
+
+## D-12 — The phone's UNPROCESSED mic swallows the start of every mark · FIXED on the test phone
+
+**Fixed by changing the mic source (`decisions.md` D-20); verification on the full clip set
+is the first open step in `progress.md`.** Found 2026-11-09 from phone captures
+(`tools/device-run.sh`, PC speaker 30–50 cm away, quiet room).
+
+**First diagnosed as room echo, which was wrong.** Whole-file duration medians showed every
+mark ~20 ms short, and an envelope plot showed slow rises and long tails, so the entry
+originally read as reverberation. Aligning each captured element to the generator's
+ground truth (clip 01, 154 elements) said otherwise: **mark ends were on time**, which echo
+cannot produce, and **mark starts were late by an amount that grew with the silence before
+them** — 10–25 ms after a gap inside a character, ~150 ms after a gap between characters,
+~170 ms after a word gap. A 180 ms dash after a character gap measured ~30 ms and read as a
+dot. That is a gain stage or gate in the input path recovering after silence.
+
+It is not in the app: the session had `src:UNPROCESSED` and **no effects attached**. Same
+clip, same speakers and room, four sources:
+
+| source | elements matched | start late after a char gap | clip 01 CER file / live (D-20 defaults) |
+|---|---|---|---|
+| UNPROCESSED (the old default) | 124/154 | 150 ms | 84 % / 100 % |
+| MIC | 125/154 | 158 ms | 89 % / 91 % |
+| CAMCORDER | 121/154 | 35 ms | 38 % / 31 % |
+| **VOICE_RECOGNITION** | **154/154** | **7.5 ms, constant** | **0.0 % / 6.7 %** |
+
+The phone's own recorder app does not show it either, which is why the first round of
+phone recordings (made with that app) looked far better than the app's own mic.
+
+After the switch, 4 clips run on the device before the run was stopped: quiet room silent,
+clip 01 11.1 %, clip 02 17.0 % — level with the same clips decoded from a perfect file
+(6.7 %, 10.6 %) — and clip 03 at the D-6 floor it has on every source. The rest of the set
+has not been run through the new default; that is `progress.md` step 0.
+
+**What it leaves open.** Other phones may gate on VOICE_RECOGNITION too, or not offer it
+cleanly. A keying-weight correction for a residual constant offset was built and measured
+(`KeyingWeight`, D-20) and is **off by default**: it fits a "weight" to noise as readily as to
+keying and broke nine tests, AC-8 among them.
+
 ---
 
 ## G-1 — No real recordings in the test corpus · High (as a risk)
+
+**Partly addressed 2026-11-09.** A real corpus now exists **outside the repo**, read by
+`RealAudioBench` through `REAL_DIR`: ten clips played through a PC speaker and captured by
+the app's own mic on a phone (with a 30 s quiet-room capture), the same clips recorded by
+the phone's recorder app, three real on-air QSOs (one with a transcript) and eight ARRL
+W1AW broadcasts with exact text. It is what D-19 was calibrated on and what found D-12. It
+is not committed; that is still the open decision. The paragraphs below are the original
+entry.
 
 Every fixture is synthetic. The requirements have flagged this since v1 (§7, "Real
 corpus"), and this session showed concretely why it matters: **synthetic audio cannot
@@ -463,6 +547,15 @@ callsign, `DL4`). A weaker tone-lock-plus-character-count assertion is possible 
 ---
 
 ## G-2 — Never run on a physical device · High (as a risk)
+
+**Partly addressed 2026-11-09.** The app has now run on a phone (Android 16, API 36) over
+USB: install, mic permission, auto-start listening, the foreground service, and live
+decoding from the raw mic all work. `tools/device-run.sh` drives it and a debug-only tap
+(`DebugTap`) logs its output and dumps what the mic hears. Still unexercised: SAF import
+through `MediaCodec` (below), audio focus, Bluetooth routing, screen-off sessions. One UI
+finding: on a 1080x2392 screen the transcript box shows about two lines.
+
+The original entry:
 
 Everything is verified by unit test and compilation only. No AVD and no `cmdline-tools`
 are configured, so no build of this app has ever executed.
