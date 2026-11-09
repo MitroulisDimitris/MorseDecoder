@@ -241,6 +241,17 @@ put a model of unknown size in an offline app, and they would replace the entire
 path — including everything `decisions.md` documents about *why* it is shaped as it is. If
 we ever have real recordings in quantity, revisit. Not before.
 
+**Correction, 2026-11-09 (`progress.md` review).** The corpus objection was wrong: these
+models train on *synthetic* audio — AG1LE and DeepFist both do — and our generator plus
+`AcousticChannel` already produce it. Real recordings are needed to *evaluate* any approach,
+ours included. The size objection is answerable: a network reading our front end's single
+envelope track needs well under 1 MB, and others ship neural Morse decoders in apps
+(Morse Decoder AI on iPad; DeepFist as ONNX inside Lyra-SDR). What still stands: on the one
+fixture with a computable floor we are near it, and a network would mostly win by implicit
+language modelling, which raw output keeps off. The owner's condition is that it runs on the
+phone; the gates are `progress.md` step 15. For scale, DeepFist reports ~7 % CER on 198 ARRL
+clips; our decoder reads our 8 ARRL clips at 0.2–0.6 % (different clips).
+
 **Full soft-decision front end.** Idea 1 above is the deepest fix, and it is a rewrite of
 the boundary between `FrontEnd` and `RobustTimingDecoder`. Worth doing eventually; not
 worth doing before the cheap wins, and not worth doing without the bench to prove it helps.

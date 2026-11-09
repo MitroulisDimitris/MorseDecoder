@@ -24,7 +24,8 @@ tasks.test {
     val benchEnv = listOf(
         "BENCH", "BENCH_CSV", "DIAG", "DIAG_WAV", "REAL_DIR", "REAL_CASES", "REAL_CHUNK",
         "REAL_REPORT", "REAL_WAV", "PHONE_CLIPS_OUT", "FIXTURE_WAV_DIR",
-        "DEMO_WAV_OUT", "DEMO_WAV_TEXT", "DEMO_WAV_WPM",
+        "DEMO_WAV_OUT", "DEMO_WAV_TEXT", "DEMO_WAV_WPM", "SLIDE_DIR", "SLIDE_CASES",
+        "SLIDE_WIN_S", "SLIDE_STEP_S", "SLIDE_LAG_S",
     ).filter { System.getenv(it) != null }
     if (benchEnv.isNotEmpty()) {
         outputs.upToDateWhen { false }

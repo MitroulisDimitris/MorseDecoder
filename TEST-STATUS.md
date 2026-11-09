@@ -76,6 +76,20 @@ they fail, and turns red if one starts passing so this list cannot go stale.
 | worst | 100 % (`room-far`, nothing decoded) | 188.6 % (`room-far`) |
 | clean machine-sent (`clean-20`, `ac1`, `ac2`) | 2.5 % | 0.0 % |
 
+## Reference captures
+
+The audio the phone's microphone fed the app in this run is committed in
+`device-test/captures/2026-11-09-vr/` (with the app's event logs and the report table).
+Replaying it reproduces the phone's decode exactly, so decoder changes can be checked
+against this run without a phone:
+
+```sh
+REAL_DIR="$(pwd -W)/device-test/captures/2026-11-09-vr" ./gradlew :core:test --tests "*RealAudioBench*" -i
+```
+
+**What's next** is in `progress.md` (review 2026-11-09, steps 11–16): real hand-sent audio
+first, before more decoder tuning.
+
 ## How to update this file
 
 After a device run (`device-test/README.md` steps 1–6):

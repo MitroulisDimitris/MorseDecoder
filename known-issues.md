@@ -269,6 +269,13 @@ above 0.45 after a recovery.
 
 ## D-6 — A rough fist at 13 WPM is decoded badly · High
 
+**Reframed 2026-11-09 (`progress.md` review and step 13).** The fixture is about 30 % ambiguous
+by construction: an oracle that knows the true unit and ratio and decides every element and
+gap optimally still gets ≈ 30 % of characters wrong (`tools/rough-fist-floor.py`). 32.9 % with
+true inputs and 36.7 % on the file path are within a few points of that. Below it only language
+context helps, which raw output keeps off by default. Read the figures below as distance to the
+floor; step 13 decides the severity.
+
 **Downgraded from catastrophic by D-17, not closed.** The cause is now measured rather
 than suspected: a single 25 ms fragment of a dash formed the entire lower cluster of the
 bootstrap seed and set the timebase 4× short. `decisions.md` D-17 has the diagnosis and the

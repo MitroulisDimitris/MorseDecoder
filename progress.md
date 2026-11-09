@@ -17,6 +17,55 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ---
 
+## Review — 2026-11-09: are we in a local minimum?
+
+Asked by the owner after the full device run (step 0): did an early choice lead the project
+somewhere it cannot get out of by iterating? Answered by measurement; every instrument named
+below is in the repo.
+
+| Check | Result | Instrument |
+|---|---|---|
+| Real machine-sent audio (8 ARRL W1AW broadcasts) | live **0.2–0.6 %** | `RealAudioBench` |
+| Floor for `hand-13-rough`: an oracle that knows unit and ratio and decides each element optimally | **≈ 30 %** CER | `tools/rough-fist-floor.py` |
+| Our decoder on the same fixture | 32.9 % with true runs and models (6a), 36.7 % file | `ResidualDiagnostic`, `DecoderBench` |
+| Real **hand-sent** recordings with a transcript | **one**: realQSO_001, live 43.0 %, file 100 % | `RealAudioBench` |
+| Live path replaced by the file decoder re-run every 1 s over the last 30 s, committing 2 s behind | phone captures **20.2 %** (live engine 33.0 %); realQSO_001 **130 %** (live 43 %); ARRL Farnsworth 10/15 WPM +6–9 points | `SlidingFileBench` |
+| `LiveDecoderEngine` | 1552 lines, 77 config values; decisions D-16, 17, 20, 21, 23, 24 are live-only patches | — |
+
+**What it says.**
+
+1. **The decoding core is not the problem.** Where a floor can be computed we are within a few
+   points of it. `hand-13-rough` is about 30 % ambiguous by construction; below that only
+   language context helps, which raw output keeps off by default. `known-issues` D-6 is
+   reframed accordingly (step 13).
+2. **Wrong turn A — the corpus.** Every number tuned against is our own generator: the bench
+   and the ten phone clips alike. The requirement "tolerant of human timing variation" has
+   **one** real data point, and it fails in a way no synthetic scenario does. G-1 was rated
+   High from the start and the work went on around it. This is the local minimum: we optimise
+   against our model of human sending without knowing whether it resembles real hands.
+3. **Wrong turn B — the live engine accumulates guards.** On the phone it loses text at state
+   changes (start, after a pause, a tone change), not in steady decoding: the file decoder in
+   a loop beats it on the phone captures. It is not a replacement — on the real QSO and on
+   Farnsworth it is worse — so keep the engine and fix its transitions with the file decoder
+   (step 14).
+4. **The neural route was ruled out for the wrong reason.** `prior-art.md` said it needs a
+   training corpus we do not have; such models train on synthetic audio, which the generator
+   and `AcousticChannel` already produce. Real recordings are needed to *evaluate* any
+   approach, ours included. Still not next: we are near the floor where it can be measured,
+   and a network would beat that mainly by implicit language modelling. **Owner condition: only
+   if it runs on the phone** (gates in step 15).
+
+**Freeze: no new guards in `LiveDecoderEngine` until steps 11–14 are done.** Each one so far
+bought a scenario and cost another — D-24 cost +0.7 points of `DecoderBench` live mean, and the
+08-14 merge broke three tests.
+
+**Next, in order: 11 → 12 → 13 → 14; 15 only if 11 shows a gap the timing decoder cannot close;
+16 whenever the phone is at hand; 10 stays on the list.** These replace the "fix the lost
+opening characters with another guard" idea floated after step 0. Real-audio handover:
+`real-audio/README.md`.
+
+---
+
 ## Update — 2026-11-09: first runs on a real phone
 
 **Read this before the 2026-08-09 summary below.**
@@ -35,7 +84,7 @@ quiet room 13 characters → 0, new-source clips 01 / 02 at 11.1 / 17.0 % (31.1 
 The cost is synthetic: `DecoderBench` live mean 16.6 → 17.3 %, mostly `video-phone` and
 `noise-20@-5` (D-24 lists it). Every device number is reproducible on the JVM: a debug build
 dumps exactly what the mic fed the engine, and `RealAudioBench` replays it bit-for-bit.
-**Step 0 — a complete device run on the new source — is first in the plan.** `HistoryBench`
+**Step 0 — a complete device run on the new source — is done** (live 33.0 %, `TEST-STATUS.md`); the review above sets the next steps. `HistoryBench`
 was not run (it lives outside the repo, decision 6).
 
 ## Where we are — 2026-08-09
@@ -681,6 +730,12 @@ without suppressing (`decisions.md` D-22). No CER change on either path.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
+| **11** | ***(new, 2026-11-09 — do first)* Real hand-sent corpus with partial transcripts** | **to do · next session, on the owner's other PC** (this PC's FortiClient blocks Google Drive) | medium | No CER change; decides 14 and 15. 20–30 contacts from the IZ4KBW archive plus realQSO_002/003 and a few G4YXX recordings; both decoders draft each, and only callsigns, RST, name, QTH and `73`/`TU` are confirmed — by someone who copies CW, or failing that by callsign formats and public logs. Procedure and sources: `real-audio/README.md` | derived |
+| **12** | Partial-reference scoring in `RealAudioBench` | **to do · ready** | small | No decode change. A case with only confirmed tokens is scored by how many of them the decode contains (token recall), not full CER. Needed before 11 can rank anything | derived |
+| **13** | Reframe `known-issues` D-6 against its floor | **to do · ready** | small | No CER change. Report `hand-13-rough` as distance to the ≈ 30 % floor (`tools/rough-fist-floor.py`); consider downgrading from High — it is the fixture, not the decoder | measured (floor) |
+| **14** | Live: re-decode buffered audio with the file decoder at change points — lock, after a pause, after a tone change | **to do** · after 11–12 | medium | Targets the phone losses directly: the first 1–3 characters of most clips, 09's `9TER` / `1` after the pause, 08's lost `THREE SECOND`. Only characters not yet shown, so append-only holds. Upper bound on the phone captures 33.0 → ~20 % (file decode of the same audio 20.6 %, `SlidingFileBench` 20.2 %). Must not cost realQSO_001 (43 %) or ARRL | derived |
+| **15** | Neural decoder spike | **gated** on 11 showing a gap the timing decoder cannot close | large | **Owner condition: runs on the phone.** Gates: model ≤ 2 MB, ≤ 10 % of one core, inference in plain Kotlin in `:core` (no runtime library; JVM tests still apply), beats the current decoder on real recordings in raw mode. Trains on synthetic audio (generator + `AcousticChannel`); a GPU PC is available. DeepFist is GPL-3.0 — a bench comparison only, no code | guess |
+| **16** | Re-run clip 01 on the phone | **to do** · needs the phone | small | 01 went 11.1 → 28.9 % with its closing digits lost on both paths — check whether that capture was bad. Also re-checks the 316 Hz noise re-lock after playback | measured (the regression) |
 | **0** | ***(new, 2026-11-09 — do first)* Record the full device capture set on VOICE_RECOGNITION** | **DONE** 2026-11-09 — live mean 33.0 % over clips 01–10, file import on the same audio 20.6 %; per clip in `TEST-STATUS.md` | small (~15 min, needs the phone) | No code change. Confirms D-25 across all ten clips, not four, and produces the **reference capture set** every later decoder change should be replayed against — the existing captures were made through UNPROCESSED and have D-14 baked in. Procedure: `device-test/README.md` | measured (4 of 11 clips so far) |
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
@@ -692,7 +747,7 @@ without suppressing (`decisions.md` D-22). No CER change on either path.
 | 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
 | 5 | The tone-jump deadlock | **done** · this commit (D-23) | small | **A stranded session recovers: 2 chars at 98.4 % CER → 88 at 11.9 %**, consistent across four jump targets, one re-lock each, first transmission untouched. `DecoderBench` identical to its `noStall` ablation. Cost three corrections found by broken tests — the keying test must ignore its own ablation switch, the current lock must be silent (AC-9), and the target must be a sustained candidate not a single sweep. Closes `known-issues` D-9; the re-lock still lands 19–42 Hz off (D-10) | measured (D-23) |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
-| 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
+| 7 | Real corpus | **superseded by 11** · the owner's own captures are committed (`device-test/captures/`); third-party audio stays out of this public repo, licences unstated (`real-audio/README.md`) | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
 | 8 | Run it on a device | **partly done** · emulator, this commit | large | **Premise refuted — an AVD was already installed and nothing was blocked.** The app ran for the first time: launch, permissions, foreground service, mic capture and stop all verified. Found `known-issues` **D-12** (UI reports Listening with no service — High) and **D-13**. Closed N-2's device-side worry: `MicCapture` feeds a fixed 80 ms chunk regardless of `getMinBufferSize`. G-2 High → Medium. A real microphone, SAF import, rotation, audio focus and Bluetooth remain | measured |
 | 9 | Signing config | **blocked** · owner decision on keystore location | small | No decode change. `assembleRelease` currently produces an APK that will not install | measured |
 | 10 | *(new, 2026-11-09)* Find a new reproducer for `known-issues` D-10 | **to do** · owner asked to keep it on the list | small | No behaviour change. The old fixture passes by avoidance since `decisions.md` D-24; D-10's remaining case — a lock that **has** decoded, sitting more than 40 Hz from the real tone — has no test holding it. Candidate fixtures: a non-ragged lock that decodes (a slowly fading pure tone, like `LiveEngineTest`'s ambient fixture) followed by Morse 50–80 Hz away; or a phone capture where that happens | derived |

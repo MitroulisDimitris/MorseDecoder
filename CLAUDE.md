@@ -8,8 +8,11 @@ human timing variation.
 Compose UI is built, and the whole decoder is covered by a JVM test suite. It has run on an
 emulator (2026-08-09) and on **one real phone** (2026-11-09), where room noise was fooling the
 tone lock (`decisions.md` D-24) and the phone's UNPROCESSED mic was swallowing the start of
-every mark (D-25 — the app now captures from VOICE_RECOGNITION). A full device run on the new
-source is the first open step in `progress.md`; `device-test/README.md` is how.
+every mark (D-25 — the app now captures from VOICE_RECOGNITION). The full device run is done
+(`TEST-STATUS.md`: live 33.0 %, file import on the same audio 20.6 %). A review of the approach
+(`progress.md`, 2026-11-09) found the corpus, not the decoder, to be the local minimum: **the
+next step is real hand-sent audio** (`real-audio/README.md`), and **no new guards go into
+`LiveDecoderEngine`** until steps 11–14 are done.
 
 ## Read first
 
@@ -84,6 +87,8 @@ DIAG=1  ./gradlew :core:test --tests "*ResidualDiagnostic*" -i   # which stage t
 DIAG=1  ./gradlew :core:test --tests "*ScaleErrorDiagnostic*" -i # what can and cannot see a wrong timebase
 REAL_DIR=<dir> ./gradlew :core:test --tests "*RealAudioBench*" -i       # both paths over real audio (device-test/)
 DIAG_WAV=<a.wav,b.wav> ./gradlew :core:test --tests "*NoiseFloorDiagnostic*" -i  # what room noise looks like to the guards
+SLIDE_DIR=<dir> ./gradlew :core:test --tests "*SlidingFileBench*" -i          # live engine vs file decoder in a sliding window
+python tools/rough-fist-floor.py                                                 # the error floor of hand-13-rough
 ```
 
 **On a phone** (debug build, USB, phone near the PC speakers): `tools/device-run.sh <out> <clip.wav>...`
