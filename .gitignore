@@ -5,6 +5,8 @@ local.properties
 *.iml
 out/
 captures/
+# ...but keep the committed reference phone captures (TEST-STATUS.md)
+!device-test/captures/
 .externalNativeBuild/
 .cxx/
 device-test/run*/

@@ -1,0 +1,45 @@
+--------- beginning of main
+11-09 14:17:48.737 I/MorseBench(21392): DUMP_START|/storage/emulated/0/Android/data/com.morsedecoder.app/files/captures/capture-1794226668737.wav
+11-09 14:17:48.869 I/MorseBench(21392): ST|t=80|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:17:50.873 I/MorseBench(21392): ST|t=2080|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:17:52.457 I/MorseBench(21455): MARK:play_start
+11-09 14:17:52.961 I/MorseBench(21392): ST|t=4160|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:17:54.964 I/MorseBench(21392): ST|t=6160|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:17:57.042 I/MorseBench(21392): ST|t=8240|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:17:59.120 I/MorseBench(21392): ST|t=10320|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:01.120 I/MorseBench(21392): ST|t=12320|lock=LOCKED|tone=1848|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:03.120 I/MorseBench(21392): ST|t=14320|lock=LOCKED|tone=1849|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:03.529 I/MorseBench(21392): CH|14720|T
+11-09 14:18:05.195 I/MorseBench(21392): ST|t=16400|lock=LOCKED|tone=1849|wpm=16.0|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:07.203 I/MorseBench(21392): ST|t=18400|lock=LOCKED|tone=1850|wpm=16.0|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:07.438 I/MorseBench(21392): CH|18640| D
+11-09 14:18:07.438 I/MorseBench(21392): CH|18640|E
+11-09 14:18:07.438 I/MorseBench(21392): CH|18640| D
+11-09 14:18:07.438 I/MorseBench(21392): CH|18640|A
+11-09 14:18:08.397 I/MorseBench(21392): CH|19600| T
+11-09 14:18:08.397 I/MorseBench(21392): CH|19600|I
+11-09 14:18:09.268 I/MorseBench(21392): ST|t=20480|lock=LOCKED|tone=1850|wpm=22.7|fit=-|low=false|supp=false|implaus=false
+11-09 14:18:10.404 I/MorseBench(21392): CH|21600| D
+11-09 14:18:11.271 I/MorseBench(21392): ST|t=22480|lock=LOCKED|tone=1850|wpm=21.7|fit=0.88|low=false|supp=false|implaus=false
+11-09 14:18:13.358 I/MorseBench(21392): ST|t=24560|lock=LOCKED|tone=1850|wpm=21.7|fit=0.88|low=false|supp=false|implaus=false
+11-09 14:18:14.159 I/MorseBench(21392): CH|25360|L
+11-09 14:18:14.159 I/MorseBench(21392): CH|25360|4
+11-09 14:18:14.159 I/MorseBench(21392): CH|25360|T
+11-09 14:18:15.357 I/MorseBench(21392): ST|t=26560|lock=LOCKED|tone=1850|wpm=19.4|fit=0.93|low=false|supp=false|implaus=false
+11-09 14:18:16.162 I/MorseBench(21392): CH|27360| L
+11-09 14:18:16.163 I/MorseBench(21392): CH|27360|L
+11-09 14:18:17.357 I/MorseBench(21392): ST|t=28560|lock=LOCKED|tone=1851|wpm=19.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:19.359 I/MorseBench(21392): ST|t=30560|lock=LOCKED|tone=1851|wpm=19.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:20.560 I/MorseBench(21392): CH|31760| B
+11-09 14:18:20.561 I/MorseBench(21392): CH|31760|E
+11-09 14:18:20.561 I/MorseBench(21392): CH|31760|S
+11-09 14:18:21.440 I/MorseBench(21392): ST|t=32640|lock=LOCKED|tone=1852|wpm=21.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:23.515 I/MorseBench(21392): ST|t=34720|lock=LOCKED|tone=1852|wpm=21.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:24.895 I/MorseBench(21789): MARK:play_end
+11-09 14:18:25.515 I/MorseBench(21392): ST|t=36720|lock=LOCKED|tone=1852|wpm=21.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:27.514 I/MorseBench(21392): ST|t=38720|lock=LOCKED|tone=1852|wpm=21.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:29.516 I/MorseBench(21392): ST|t=40720|lock=LOCKED|tone=1852|wpm=21.8|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:18:31.517 I/MorseBench(21392): ST|t=42720|lock=LOCKED|tone=1852|wpm=21.6|fit=0.91|low=false|supp=false|implaus=false
+11-09 14:18:33.599 I/MorseBench(21392): ST|t=44800|lock=LOCKED|tone=1852|wpm=18.6|fit=0.73|low=false|supp=false|implaus=false
+11-09 14:18:35.269 I/MorseBench(21902): MARK:quiet_end
+11-09 14:18:35.669 I/MorseBench(21392): ST|t=46880|lock=LOCKED|tone=1852|wpm=21.3|fit=0.76|low=false|supp=false|implaus=false

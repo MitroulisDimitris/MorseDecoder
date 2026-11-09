@@ -1,0 +1,67 @@
+--------- beginning of main
+11-09 14:11:33.996 I/MorseBench(17080): DUMP_START|/storage/emulated/0/Android/data/com.morsedecoder.app/files/captures/capture-1794226293995.wav
+11-09 14:11:34.130 I/MorseBench(17080): ST|t=80|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:36.133 I/MorseBench(17080): ST|t=2080|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:37.729 I/MorseBench(17152): MARK:play_start
+11-09 14:11:38.217 I/MorseBench(17080): ST|t=4160|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:40.217 I/MorseBench(17080): ST|t=6160|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:42.226 I/MorseBench(17080): ST|t=8160|lock=SEARCHING|tone=0|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:44.304 I/MorseBench(17080): ST|t=10240|lock=LOCKED|tone=689|wpm=-|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:46.377 I/MorseBench(17080): ST|t=12320|lock=LOCKED|tone=693|wpm=20.2|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:46.937 I/MorseBench(17080): CH|12880|Q
+11-09 14:11:47.899 I/MorseBench(17080): CH|13840|U
+11-09 14:11:48.132 I/MorseBench(17080): CH|14080|I
+11-09 14:11:48.132 I/MorseBench(17080): CH|14080|C
+11-09 14:11:48.132 I/MorseBench(17080): CH|14080|K
+11-09 14:11:48.381 I/MorseBench(17080): ST|t=14320|lock=LOCKED|tone=695|wpm=20.4|fit=-|low=false|supp=false|implaus=false
+11-09 14:11:50.453 I/MorseBench(17080): ST|t=16400|lock=LOCKED|tone=697|wpm=20.4|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:11:50.778 I/MorseBench(17080): CH|16720| B
+11-09 14:11:51.583 I/MorseBench(17080): CH|17520|R
+11-09 14:11:51.583 I/MorseBench(17080): CH|17520|O
+11-09 14:11:51.583 I/MorseBench(17080): CH|17520|W
+11-09 14:11:51.583 I/MorseBench(17080): CH|17520|N
+11-09 14:11:52.455 I/MorseBench(17080): ST|t=18400|lock=LOCKED|tone=698|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:11:54.223 I/MorseBench(17080): CH|20160| F
+11-09 14:11:54.223 I/MorseBench(17080): CH|20160|O
+11-09 14:11:54.223 I/MorseBench(17080): CH|20160|X
+11-09 14:11:54.530 I/MorseBench(17080): ST|t=20480|lock=LOCKED|tone=698|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:11:56.529 I/MorseBench(17080): ST|t=22480|lock=LOCKED|tone=699|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:11:57.097 I/MorseBench(17080): CH|23040| J
+11-09 14:11:57.822 I/MorseBench(17080): CH|23760|U
+11-09 14:11:58.058 I/MorseBench(17080): CH|24000|M
+11-09 14:11:58.058 I/MorseBench(17080): CH|24000|P
+11-09 14:11:58.059 I/MorseBench(17080): CH|24000|S
+11-09 14:11:58.531 I/MorseBench(17080): ST|t=24480|lock=LOCKED|tone=699|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:00.616 I/MorseBench(17080): ST|t=26560|lock=LOCKED|tone=700|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:00.861 I/MorseBench(17080): CH|26800| O
+11-09 14:12:00.861 I/MorseBench(17080): CH|26800|V
+11-09 14:12:00.862 I/MorseBench(17080): CH|26800|E
+11-09 14:12:00.863 I/MorseBench(17080): CH|26800|R
+11-09 14:12:02.058 I/MorseBench(17080): CH|28000| T
+11-09 14:12:02.058 I/MorseBench(17080): CH|28000|H
+11-09 14:12:02.058 I/MorseBench(17080): CH|28000|E
+11-09 14:12:02.619 I/MorseBench(17080): ST|t=28560|lock=LOCKED|tone=700|wpm=20.1|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:04.534 I/MorseBench(17080): CH|30480| L
+11-09 14:12:04.695 I/MorseBench(17080): ST|t=30640|lock=LOCKED|tone=700|wpm=20.2|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:05.421 I/MorseBench(17080): CH|31360|A
+11-09 14:12:05.421 I/MorseBench(17080): CH|31360|Z
+11-09 14:12:05.421 I/MorseBench(17080): CH|31360|Y
+11-09 14:12:06.695 I/MorseBench(17080): ST|t=32640|lock=LOCKED|tone=700|wpm=20.1|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:07.821 I/MorseBench(17080): CH|33760| D
+11-09 14:12:07.823 I/MorseBench(17080): CH|33760|O
+11-09 14:12:07.823 I/MorseBench(17080): CH|33760|G
+11-09 14:12:08.698 I/MorseBench(17080): ST|t=34640|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:10.773 I/MorseBench(17080): ST|t=36720|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:12.776 I/MorseBench(17080): ST|t=38720|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:14.777 I/MorseBench(17080): ST|t=40720|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:16.777 I/MorseBench(17080): ST|t=42720|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:18.855 I/MorseBench(17080): ST|t=44800|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:20.931 I/MorseBench(17080): ST|t=46880|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:21.080 I/MorseBench(17619): MARK:play_end
+11-09 14:12:22.930 I/MorseBench(17080): ST|t=48880|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:24.931 I/MorseBench(17080): ST|t=50880|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:26.931 I/MorseBench(17080): ST|t=52880|lock=LOCKED|tone=700|wpm=20.3|fit=1.00|low=false|supp=false|implaus=false
+11-09 14:12:28.931 I/MorseBench(17080): ST|t=54880|lock=LOCKED|tone=700|wpm=20.3|fit=0.89|low=false|supp=false|implaus=false
+11-09 14:12:30.931 I/MorseBench(17080): ST|t=56880|lock=LOCKED|tone=700|wpm=20.3|fit=0.88|low=false|supp=false|implaus=false
+11-09 14:12:31.459 I/MorseBench(17715): MARK:quiet_end
+11-09 14:12:31.497 I/MorseBench(17080): RELOCK|AUTOMATIC|699.9|315.7|57400
