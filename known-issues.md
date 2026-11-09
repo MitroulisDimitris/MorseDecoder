@@ -24,7 +24,7 @@ Severity is about what a user experiences, not how hard the fix is:
 
 ---
 
-## D-1 — A unit-scale error scores a perfect fit · High
+## D-1 — A unit-scale error scores a perfect fit · FIXED
 
 `modelFitQuality` reports **1.00** — maximum confidence — on wholly incorrect output.
 
@@ -40,15 +40,16 @@ perfectly — halve the unit and true dots read as 2 units, dashes as 6, still t
 clusters at 3:1. The model fits its own measurements beautifully; the measurements are
 just referred to the wrong unit.
 
-**Reproducible synthetically** — no longer only visible on the one real clip. Two bench
-scenarios (`BENCH=1 gradlew :core:test --tests "*DecoderBench*" -i`) exhibit it:
+**It used to arise on its own**, on two bench scenarios (`BENCH=1 gradlew :core:test
+--tests "*DecoderBench*" -i`) — **both since closed**, which is how the reproducer came to
+be lost:
 
-| Scenario | Path | True speed | Reported | Chars vs ref | CER | Gate |
-|---|---|---|---|---|---|---|
-| `hand-13-rough` | live | 13 WPM | **53 WPM** | 145 vs 62 | 251 % | never engaged |
-| `qsb-impulse` | file | 18 WPM | **60 WPM** (clamped) | 121 vs 62 | 168 % | n/a |
+| Scenario | Path | True speed | Reported | Chars vs ref | CER | Gate | Since |
+|---|---|---|---|---|---|---|---|
+| `hand-13-rough` | live | 13 WPM | **53 WPM** | 145 vs 62 | 251 % | never engaged | 15.1 WPM (D-17, D-21) |
+| `qsb-impulse` | file | 18 WPM | **60 WPM** (clamped) | 121 vs 62 | 168 % | n/a | 19.2 WPM (D-19) |
 
-The bench's starkest result is negative space: **`outputSuppressed` was false in all 16
+The bench's starkest result was negative space: **`outputSuppressed` was false in all 16
 scenarios**, including those two. The output gate is inert against scale error across the
 entire matrix, which is what makes this a capability gap rather than a tuning problem.
 
@@ -57,34 +58,93 @@ consequence D-8 does not record: **an octave-type unit error is invisible to eve
 quality signal in the system.** The output gate keys off `fitQuality`, so it cannot
 suppress this; the UI shows `fit 1.00`; nothing warns.
 
-**Its only reproducer is gone, and the gap is not.** D-17 removed the seed error that
-produced the 4× scale error, so no scenario in the synthetic matrix now exhibits one — the
-live path reports 21.5 WPM on `hand-13-rough` and plausible speeds everywhere else, and a
-probe over dash-heavy and dot-heavy openings could not construct a replacement. The
-`@KnownFailure("D-1")` test therefore passes and its annotation has been removed; it now
-guards D-17 instead.
+**The reproducer was lost, and has been restored** (step 4a). D-17 removed the seed error
+that produced the 4× scale error, so no scenario in the synthetic matrix bootstraps one any
+more — the live path reports 21.5 WPM on `hand-13-rough` and plausible speeds everywhere
+else, and a probe over dash-heavy and dot-heavy openings could not construct a replacement.
+The old `@KnownFailure("D-1")` test therefore started passing **without anything having been
+fixed**; its annotation was removed and it now guards D-17 instead.
 
-Nothing about the capability changed. What remains as evidence:
+The replacement injects the wrong unit directly, through **FR-9.5's WPM pin** — the only
+supported way to hand the decoder a unit known to be wrong. A clean 20 WPM signal (612 Hz,
++10 dB, the fixture the rest of `HonestFailureTest` uses) decoded against a unit pinned at
+40 WPM:
 
-- the real recording, which still reads 30.6 WPM against a true 17.7 on the live path —
-  uncommitted, so blocked on **G-1**;
-- `fitQuality` reporting **1.00 on decodes measured at 13–23 % CER** (dash-heavy and
-  dot-heavy openings, +10 dB, 13 and 20 WPM). Confidence is still uncorrelated with
-  correctness even where the unit is roughly right.
+| | pinned 40 WPM | true 20 WPM, unpinned |
+|---|---|---|
+| characters emitted (62 sent) | **202** | 61 |
+| CER | **297.5 %** | 2.5 % |
+| transcript is `E`/`T`/`I`/`M` | **98.5 %** | 21 % |
+| `fitQuality` | **1.00** | 1.00 |
+| `outputSuppressed` | **false** | false |
+| `lockState` | **LOCKED** | LOCKED |
 
-A defect with no reproducer is one nobody will notice regressing. Restoring one — from the
-real corpus, or by injecting a known-wrong unit directly — should come before any further
-work that assumes scale errors are visible.
+`TA C Q TEE E EEE EEET ETTTT ET TEEE TETE TET T EEEE` at maximum reported confidence. The
+observation window is full — 64 fit samples at `p10 = p50 = 1.00`, against the real
+recording's `p10 = 0.91, p50 = 1.00`, so the synthetic reproducer is if anything a *cleaner*
+instance of the defect than the clip that first showed it.
 
-Candidate directions, none yet chosen:
+Two tests hold it, deliberately separated (`HonestFailureTest`):
 
-- Cross-check the unit against gap structure. Gaps are excluded from *estimating* the
-  unit for good reasons (D-2), but a 2× unit error predicts inter-character gaps at 6
-  units and word gaps at 14, which is checkable without using gaps as an estimator.
-- Score the decoded *alphabet distribution*. A transcript that is 90 % `E`/`T`/`I`/`M`
-  is prima facie a scale error — real text is not. Cheap, and independent of timing.
-- Treat a large disagreement between the streaming unit and a periodic batch re-fit as a
-  degraded state.
+- `a unit pinned an octave out does not reproduce the text` — passes, and guards the
+  **premise**. The last reproducer evaporated silently when the input that triggered it was
+  removed; this one asserts CER > 0.5, which survives any legitimate fix (a decoder that
+  suppressed the output would score 100 %) and fails loudly if the scale error stops
+  happening.
+- `a decode built on a wrong unit is flagged by some signal` — asserts the **defect**. It
+  was `@KnownFailure("D-1")` when written and passes since D-22 below.
+
+**The pin is the vehicle, not the defect.** `ObservationFit` scores 2-means clusters over
+*normalised* durations `ln(duration / unit)`, and `fitQuality` is separation × ratio ×
+tightness over those clusters — every term is invariant to the unit, so a uniform `ln 2`
+shift changes none of them. Where the wrong unit came from is irrelevant to whether anything
+can see it.
+
+The pin also disables D-21's periodic re-fit (FR-9.5 owns the unit while pinned), so the one
+signal that might have caught this — a streaming-vs-batch disagreement — is not computed at
+all in this state. That is a real gap in its own right.
+
+The direction of the error matters, and the asymmetry is worth recording. Pinned *slow* the
+decoder largely recovers (10 WPM against a true 20: CER 15.2 %; 13.3 WPM: 2.5 %, identical
+to unpinned) because the lattice's per-character shrinkage absorbs it. Pinned *fast* it
+shatters (30 WPM: 38.0 %; 40: 297.5 %; 53: 310.1 %) — a short unit reads every dash as a run
+of dots. Only the extreme slow end trips anything: at 6.7 WPM the fit collapses to 0.02 and
+the gate suppresses correctly, which is the gate working on a *shape* error, not a scale one.
+
+### Closed by output plausibility · `decisions.md` D-22
+
+Something notices now: `LiveDecoderEngine.outputImplausible` and
+`FileResult.outputImplausible`. The reproducer above trips it at **1.03 marks per committed
+character** against 3.4 for real text.
+
+The scale-freedom argument is what settled the design. It rules out both of the timing
+cross-checks this entry used to list as candidates — there is no absolute anchor anywhere in
+the timing to check against, because every quantity in Morse is a ratio. It leaves exactly
+one place the freedom breaks, the **decoded characters**, and that is what the fix reads. The
+statistic, the 48-character window, the 1.9 threshold and the 1.50× margin behind it are all
+in D-22, along with the measurement that killed the shorter windows: at 16 characters a
+healthy `hesitation` decode dips *below* a genuine scale error.
+
+**It reports; it does not suppress**, and that is a decision rather than an omission — the
+two rows binding the margin are the two most human fixtures in the corpus, which is lesson
+5's exact trap, and after 48 characters the wrong output is already emitted and P-2 forbids
+retracting it. So this closes "nothing can see it", not "it cannot happen".
+
+Regression tests, all passing: `HonestFailureTest."a decode built on a wrong unit is flagged
+by some signal"` and `."a unit pinned an octave out does not reproduce the text"` (the
+reproducer, which must keep failing to decode), plus `."a rough fist and a hesitant sender
+are not flagged as implausible"` for the false-positive side.
+
+Note `fitQuality` still reads **1.00** on the reproducer and that is now understood to be
+**correct**: it answers whether the two-cluster model fits its own measurements, and under a
+scale error it genuinely does. Forcing it down would make it lie about its own question.
+
+Two things this did not close, both carried forward rather than dropped:
+
+- the real recording still reads 30.6 WPM against a true 17.7 on the live path, and is
+  uncommitted — **G-1**;
+- confidence is still uncorrelated with correctness where the unit is roughly right, which
+  is now **D-11** below, with its obvious candidate measured and ruled out.
 
 ---
 
@@ -108,9 +168,16 @@ Feeding only the clean section, or force-locking the correct tone, produces part
 legible output (`D L 4 ... C R M Q S RE O K`), so the streaming decoder is not broken —
 it is fragile about where it starts.
 
-Likely direction: re-bootstrap rather than commit once. A periodic batch re-fit over a
-recent window, adopted when it disagrees materially with the tracked unit, would recover
-from a bad start without abandoning the streaming architecture.
+**Narrowed by the periodic re-bootstrap (`decisions.md` D-21), not closed.** The "never
+revisits" half is fixed: every 16 marks the unit is re-fit from a batch of recent marks
+(2-means, segmentation-free) and adopted on a material disagreement. On the synthetic proxy
+`hand-13-rough` — a 1.68× unit error, close to this recording's 1.73× — it corrects the
+reported speed from 21.9 WPM to 15.1 (true 13) and takes CER 69.6 % → **65.8 %**. But the
+gap to the file path (36.7 %) does not close, because the file path only reaches it by
+*freezing* the unit (D-19), and N-5 established the freeze cannot transfer to the live path,
+where the Kalman is the only estimate after bootstrap — so the tracker resumes chasing the
+fist's per-character bias and the decode re-degrades. The re-bootstrap's real value is on a
+recording worse than any synthetic, i.e. this one, which stays blocked on **G-1**.
 
 ---
 
@@ -210,13 +277,16 @@ guard; the numbers below are the current state.
 `hand-13-rough` (25 % jitter, 12 % per-character bias, 2.1:1 dash ratio, +5 dB) is still
 the worst scenario in the bench, and still fails differently in each path:
 
-- **file** — **64.6 % CER**, 79 characters, at a reported 17.9 WPM against a true 13. It
-  used to emit nothing at all; `decisions.md` D-18 retired the `fitQuality < 0.12` veto that
-  was declining it. Measured with `DecoderBench`.
-- **live** — **65.9 % CER**, 99 characters against 99 sent, at a reported 21.5 WPM against a
-  true 13. The character count is now right and the timebase is out by 1.65× rather than 4×.
-  Measured with `HistoryBench`; `DecoderBench`'s shorter text puts the same scenario at
-  89.9 %.
+- **file** — **36.7 % CER**, down from 64.6 %, since `decisions.md` D-19 stopped pass 2
+  re-opening the locked unit and chasing the 12 % per-character bias (step 6b). Measured with
+  `DecoderBench`. This is the tracking cost 6a had attributed; what remains is the lattice and
+  the mark/gap models under 25 % jitter.
+- **live** — **65.9 % CER** on `HistoryBench` (99 characters against 99 sent, reported
+  21.5 WPM against a true 13; timebase out by 1.65× rather than 4×). On `DecoderBench`'s
+  shorter text the same scenario read 89.9 % before step 2 and **69.6 %** after it
+  (`decisions.md` D-20 made the live decode chunk-invariant; the 89.9 % was a 4096-chunk
+  artefact). D-19 and D-20 are both live-neutral / file-neutral respectively for the *other*
+  path — the live figure moved only because step 2 stopped it depending on the buffer size.
 
 | Commit | chars emitted (99 sent) | CER |
 |---|---|---|
@@ -241,8 +311,8 @@ declined the transmission was the `fitQuality < 0.12` veto, on a score that rank
 (0.0987) below speech (0.4741), knocking (0.4033) and clipping (0.7386), all of which it
 decoded. Reproduce with `DIAG=1 gradlew :core:test --tests "*FileGateDiagnostic*" -i`.
 
-What remains on the file path is decode quality, not a veto: 64.6 % CER on a fit whose unit
-is right to 4 %.
+What remains on the file path is decode quality, not a veto: **36.7 % CER** (was 64.6 %
+before D-19) on a fit whose unit is right to 4 %.
 
 **What the history says about D-13.** The pre-D-13 decoder under-emitted here (66 of 99).
 D-13 made it lock reliably, and a reliable lock on a signal whose unit estimate is 4×
@@ -254,26 +324,29 @@ actively harmful, without a working unit estimate.**
 The impairment levels are aggressive but not unrealistic — this is what a beginner on a
 straight key in a noisy room looks like, which is squarely inside the intended use.
 
-**The remaining error is now attributed, and it is the speed tracker.** Step 6a
-(`ResidualDiagnostic`) hands each stage of the file path the generator's ground truth in
+**The remaining error was attributed to the speed tracker, and D-19 removed it.** Step 6a
+(`ResidualDiagnostic`) handed each stage of the file path the generator's ground truth in
 turn:
 
 | | `hand-13-rough`, file | isolates |
 |---|---|---|
-| shipped | 64.6 % | baseline |
+| shipped, pre-D-19 | 64.6 % | baseline |
 | **+ frozen pass-2 Kalman** | **36.7 %** | **tracking — 27.9 points** |
 | + perfect element timeline | 63.3 % | segmentation — 1.3 points |
 | + both, plus truth models | 32.9 % | the floor: lattice and models under jitter |
 
 Segmentation is not the problem and is not even marginal: 214 measured marks against 214
 true, none fragmented, merged, spurious or dropped, median leading-edge error 1 % of a dot.
-**This closes the question this entry used to leave open, and it answers it against the
+**This closed the question this entry used to leave open, and answered it against the
 soft-decision front end** (`prior-art.md` idea 1), whose measured ceiling here is 1.3 points.
 
-The tracker finding is `progress.md` N-5 and is being handled as step 6b. Note what it does
-*not* do: 36.7 % is a large improvement and still not a decode, and 32.9 % is the floor this
-architecture reaches on this fixture even when handed the truth at every stage. D-6 stays
-open on that basis.
+D-19 (step 6b) made that frozen-Kalman row the shipped file path: pass 2 now decodes with
+the unit locked and the Kalman only reports FM-2's track. The file decode is **36.7 %**.
+What it does *not* do: 36.7 % is a large improvement and still not a decode, and 32.9 % is
+the floor this architecture reaches on this fixture even when handed the truth at every
+stage. D-6 stays open on that basis, and the live path is untouched at 89.9 %. Below 32.9 %
+needs a better lattice or better mark/gap models under jitter, and nobody has proposed
+either.
 
 ---
 
@@ -304,7 +377,7 @@ flagged, so FR-5.7's best-effort band is untouched.
 ## D-8 — Speech and RTTY decode as Morse · High
 
 **Narrowed 2026-11-09, not closed.** Mixed room audio (speech over hum) no longer decodes on
-the live path: the steadiness output hold (`decisions.md` D-19) sees that the locked tone's
+the live path: the steadiness output hold (`decisions.md` D-24) sees that the locked tone's
 on level is ragged and holds output. Ablated, speech+hum emits 12 characters with only that
 switch off and 0 with it on. Speech alone, RTTY, clipping, knocking on the file path, and
 the `fitQuality` RTTY overlap are all still open, and their tests still fail.
@@ -407,7 +480,7 @@ Two further holes in the same area, visible in the measurements:
 
 ---
 
-## D-9 — A tone change mid-session strands the lock permanently · High
+## D-9 — A tone change mid-session strands the lock permanently · FIXED
 
 The operator moves frequency, or the user tunes the radio. Measured: a jump from 612 Hz to
 1150 Hz mid-session yields **2 characters** for the whole second transmission, and the lock
@@ -423,64 +496,166 @@ It is a deadlock between two guards that are each individually correct:
 D-13's dead-end recovery breaks exactly this tie, but was deliberately scoped to locks that
 had **never** decoded anything. This lock had, so it is excluded.
 
-The fix has a real trade-off, which is why it is not already done: extending recovery to
-proven locks means a lock could be taken away during a legitimate pause if another station
-is active elsewhere — precisely the asymmetry D-7 chose to avoid. A defensible shape is
-"re-lock only if the current lock has produced nothing for N seconds **and** a keyed peak
-exists elsewhere in the band", which stays safe for AC-9 because silence offers no keyed
-peak. Needs a decision on N and on whether to accept the D-7 trade at all.
+**Fixed by `decisions.md` D-23.** A lock that has committed nothing for **10 s** is handed
+over to a distinct keyed signal elsewhere in the band. Measured by ablation on one build:
+
+| jump from 612 Hz | before | after |
+|---|---|---|
+| → 1150 Hz | 2 chars, 98.4 % CER | **88 chars, 11.9 %** |
+| → 900 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 1600 Hz | 2 chars, 98.4 % | **90 chars, 12.7 %** |
+| → 420 Hz | 2 chars, 98.4 % | **88 chars, 12.7 %** |
+
+The first transmission is untouched (96 characters, 4.0 %) and each recovery costs one
+re-lock. `DecoderBench` is identical to its `noStall` ablation on all 16 scenarios.
+
+The owner accepted the D-7 trade on 2026-08-09: a proven lock can now be taken during a
+legitimate pause if another station is keying. AC-9 is held not by the timer but by the
+requirement that **the current lock be silent** — a keyed frequency is never stranded — which
+is what stops the same station's own sideband stealing the lock when it resumes. The full
+account of the three conditions, each of which was bought with a broken test, is in D-23.
+
+Regression test: `SessionSequenceTest."a tone jump mid-session is recovered and marked"`,
+formerly the `@KnownFailure`. Watch its tone assertion rather than its character count: the
+re-lock lands 19–42 Hz off across the four jumps and **D-10** says the EMA cannot re-centre
+from there, so it passes at 18.7 Hz against a 25 Hz bar. A future failure on the frequency is
+D-10 surfacing here, not this fix regressing.
 
 ---
 
 ## D-10 — Tone readout stays off after recovering from a wrong lock · Medium
 
 After the decoder recovers from a lock taken on room noise, the tracked frequency settles
-well away from the true tone and stays there: measured **~76 Hz low** on a 612 Hz signal.
+well away from the true tone and stays there: **~76–96 Hz** off on a 612 Hz signal.
 
-Decoding is unaffected — the 10 ms analysis window is roughly 100 Hz wide, so the keying
-envelope survives the offset, and the tail of that decode is clean. But the `tone` readout
-and the spectrum lock marker are simply wrong, which matters to anyone using them to tune a
+Decoding is *mostly* unaffected — the analysis window is roughly 100 Hz wide, so the keying
+envelope survives the offset — but at the larger offsets (measured up to ~96 Hz after the
+D-20 sample-grid rewrite shifted acquisition) the offset does cost the decode, not just the
+readout: a seed sweep put the recovered tone 92–98 Hz off on seven of nine seeds, and the
+`SessionSequenceTest` recovery case lands ~80 Hz low with a 19 % tail. The `tone` readout and
+the spectrum lock marker are wrong regardless, which matters to anyone using them to tune a
 radio, and the margin against a genuinely lost lock is much thinner than it looks.
+
+The `@KnownFailure("D-10")` test was re-pointed from morse seed 53 to seed 43 in D-20: the
+deterministic acquisition now lands seed 53 on the tone by luck, but the re-centring mechanism
+(the tracking EMA cannot re-centre once off by more than `trackWindowHz`) is untouched and
+shows on almost every other seed. The defect is not fixed; only the fixture that exposed it
+moved.
 
 Related to **D-3**, where a mains-vetoed frequency settles ~20 Hz off for a different
 reason. Both suggest the tracking EMA has no mechanism to re-centre once it is off by more
 than the hysteresis window (`trackWindowHz` = 15 Hz).
 
 **Its reproducer no longer reproduces, and the gap is only partly closed** (2026-11-09) —
-the same position D-1 is in. `SessionSequenceTest`'s speech-then-Morse fixture now ends
-0.4 Hz from the true tone, but by avoidance: the lock on speech emits nothing (ragged on
-level, output held), so it never proves itself, gives way to the keyed tone, and that tone
-is acquired fresh (`decisions.md` D-19). Ablated, turning off the yield alone puts it back
-at 953 Hz out. The annotation came off because the test passes; the entry stays because
-what it describes is still possible: a lock that **has** decoded and sits more than 40 Hz
-from the real tone has nothing that re-centres it. D-19's skirt re-centre covers up to 40
-Hz from where the lock was taken, deliberately no further. Needs a new reproducer, or a
-decision that the remaining case is not worth one.
+the same position D-1 was in. `SessionSequenceTest`'s five-seed speech-then-Morse fixture now
+ends within 0.1 Hz of the true tone on every seed, but by avoidance: the `decisions.md` D-24
+acquisition guards refuse to lock onto the speech at all, so there is no wrong lock to
+recover from. Ablated, any single D-24 switch off still passes; all of them off puts the
+worst seed back at 96.5 Hz out. The annotation came off because the test passes; the entry
+stays because what it describes is still possible: a lock that **has** decoded and sits more
+than 40 Hz from the real tone has nothing that re-centres it — D-24's skirt re-centre covers
+40 Hz from where the lock was taken, deliberately no further. Needs a new reproducer
+(`progress.md` step 10), or a decision that the remaining case is not worth one.
 
 ---
 
-## D-11 — A randomly fading carrier leaks more output before the fit gate engages · Low
+## D-11 — Nothing correlates with how wrong the decode is · Medium
 
-Introduced by `decisions.md` D-19, recorded as the trade-off it is. `LiveEngineTest`'s
-ambient fixture — a pure tone under a slow random-walk volume — lets 14 characters through
-the fit gate where it used to let 9, against a raw 47; the test allows a quarter of raw
-plus two, 13.75. Across five seeds the gated total went from 39 to 50.
+Split out of **D-1** when its scale-error half was closed by `decisions.md` D-22, because
+that fix does not touch this and it would otherwise have been dropped.
 
-Mechanism, measured: the stricter keying screen refuses this tone for about 5 s longer
-(lock at 8 s instead of 3 s), and the fit gate then happens to take longer to engage. The
-steadiness hold does not help here and should not: a slowly wandering on level is exactly
-what fading looks like, and the fixture scores 2.6 — inside the range real QSB occupies
-(<= 2.8), far from real room noise (>= 5.4). On the real quiet-room capture the same
-change took output from 10 characters to 0.
+Two scenarios decode at roughly two-fifths wrong while every signal the system publishes
+reads healthy. Measured by `ScaleErrorDiagnostic` (`DIAG=1`):
 
-Not tuned away on purpose: loosening the screen would re-admit real room noise, and the
-remaining leak is a property of the fit gate's engagement speed.
+| scenario | CER | `fitQuality` | mean confidence | marks/char | flagged? |
+|---|---|---|---|---|---|
+| `clean-20` | 2.5 % | 1.00 | 0.995 | 3.43 | — |
+| `hand-18` | 10.1 % | 0.95 | **0.943** | 3.39 | — |
+| `hesitation` | **39.2 %** | **1.00** | **0.978** | 2.73 | no |
+| `qsb-impulse` | **41.8 %** | **1.00** | **0.990** | 2.77 | no |
+
+**The obvious candidate is measured and inverted.** FR-6.6's per-character lattice confidence
+is the decoder's own statement of how sure it is, and it ranks `qsb-impulse` at 41.8 % CER
+(0.990) *above* `hand-18` at 10.1 % (0.943). Across the whole matrix it ranks a 297 % CER
+scale error (0.893) above a 65.8 % rough fist (0.793). It is a within-lattice quantity — how
+much better the winning path scored than its rivals — and under a wrong model every rival is
+wrong too, so the winner still wins comfortably. It measures decisiveness, not correctness.
+
+This is the same structural shape as D-1 and D-8 rather than a tuning gap: every score the
+decoder computes is a **self-consistency** score, and self-consistency is exactly what
+survives a systematically wrong answer. D-22 broke that circle once by reading the decoded
+characters instead of the timing, and marks-per-character catches only the shattering mode —
+`hesitation` and `qsb-impulse` produce normally-shaped characters that are simply the wrong
+ones.
+
+Held by `HonestFailureTest."a decode two-fifths wrong is distinguishable from a correct one"`,
+`@KnownFailure("D-11")`.
+
+Severity is Medium rather than High: unlike D-1 the output is *partly* right and visibly
+ragged, so the user is not being told a wrong answer is a good one so much as not being told
+how good it is. What would close it is a signal grounded outside the decoder's own model —
+lexicon agreement scored without applying it (FR-7.1 is already implemented and off by
+default, P-3), or the D-8 structure work. Both are blocked on **G-1**, which is also the only
+place a threshold for this could honestly be set.
 
 ---
 
-## D-12 — The phone's UNPROCESSED mic swallows the start of every mark · FIXED on the test phone
+## D-12 — The UI can report "Listening" with nothing running · High
 
-**Fixed by changing the mic source (`decisions.md` D-20); verification on the full clip set
+Found on the **first ever device run** (2026-08-09, emulator, API 36). The main screen
+shows the green **Listening** indicator with Pause/Stop, every readout dashed, the spectrum
+flat — and `dumpsys activity services` reports **no foreground service at all**. The app
+looks like it is working and decodes nothing, indefinitely. Only Stop-then-Listen (or a
+restart) recovers, and the user has no reason to try either.
+
+The mechanism is in the code rather than the platform, and is visible without a device once
+you know to look for it:
+
+- `DecoderService.publish()` sets **`listening = true` unconditionally** (`DecoderService.kt:317`)
+  on every published snapshot;
+- `publish()` runs on `decodeExecutor`, off the main thread, one task per audio chunk;
+- `onDestroy()` calls `decodeExecutor.shutdown()` — which does **not** cancel already-queued
+  tasks — and only then sets `listening = false` (`DecoderService.kt:443`).
+
+So any `publish()` still in flight when the service dies runs *after* the flag is cleared and
+re-asserts it. `DecoderService.state` is a companion-object `MutableStateFlow` that outlives
+the service, so nothing later corrects it, and `MainActivity` renders Pause/Stop for exactly
+`state.listening` (`MainActivity.kt:256`).
+
+The window is not narrow in practice: audio arrives every 80 ms and Stop is pressed while
+capturing, which is the only time anyone presses it.
+
+Not reproduced on a schedule yet — the screenshot evidence is a stuck state reached after a
+Stop, and the mechanism above is read from the code rather than from an instrumented run. A
+regression test should drive `onStartCommand` → `publish()` → `onDestroy` ordering directly;
+that is JVM-testable once the executor is injectable, which it currently is not.
+
+---
+
+## D-13 — Readouts report values they do not have · Low
+
+Three cosmetic-but-dishonest readings, all seen on the first device run and all the same
+mistake D-5 fixed for `fitQuality`: rendering "no measurement" as a number.
+
+| Readout | Shows when idle | Should be |
+|---|---|---|
+| debug fit strip | `p10 1.00  p50 1.00  p90 1.00  n0` | no percentiles at all with `n0` |
+| `snr` tile | `0 dB` | `—`, as `wpm`/`tone`/`fit` correctly do |
+
+The debug strip is the same "perfect over zero samples" rendering D-5 removed from the main
+`fit` tile, surviving one layer down — and it is the readout `Config.emitFitSuppressBelow`
+is meant to be calibrated against on real audio, so it is the one that most needs to be
+honest.
+
+Separately, the `emit` label in that strip is **clipped and wrapped** to `emi` / `t` at
+1080 px. The accessibility tree carries the full string, so it is a width constraint in the
+row, not a text bug.
+
+---
+
+## D-14 — The phone's UNPROCESSED mic swallows the start of every mark · FIXED on the test phone
+
+**Fixed by changing the mic source (`decisions.md` D-25); verification on the full clip set
 is the first open step in `progress.md`.** Found 2026-11-09 from phone captures
 (`tools/device-run.sh`, PC speaker 30–50 cm away, quiet room).
 
@@ -508,12 +683,14 @@ phone recordings (made with that app) looked far better than the app's own mic.
 
 After the switch, 4 clips run on the device before the run was stopped: quiet room silent,
 clip 01 11.1 %, clip 02 17.0 % — level with the same clips decoded from a perfect file
-(6.7 %, 10.6 %) — and clip 03 at the D-6 floor it has on every source. The rest of the set
-has not been run through the new default; that is `progress.md` step 0.
+(6.7 %, 10.6 %) — and clip 03 at the D-6 floor it has on every source. Replayed through the
+merged code (with the 08-14 `main`) those three read 11.1 / 17.0 / 79.4 % against 31.1 / 25.5
+/ 79.4 % on that `main` alone. The rest of the set has not been run through the new default;
+that is `progress.md` step 0.
 
 **What it leaves open.** Other phones may gate on VOICE_RECOGNITION too, or not offer it
 cleanly. A keying-weight correction for a residual constant offset was built and measured
-(`KeyingWeight`, D-20) and is **off by default**: it fits a "weight" to noise as readily as to
+(`KeyingWeight`, `decisions.md` D-25) and is **off by default**: it fits a "weight" to noise as readily as to
 keying and broke nine tests, AC-8 among them.
 
 ---
@@ -524,7 +701,7 @@ keying and broke nine tests, AC-8 among them.
 `RealAudioBench` through `REAL_DIR`: ten clips played through a PC speaker and captured by
 the app's own mic on a phone (with a 30 s quiet-room capture), the same clips recorded by
 the phone's recorder app, three real on-air QSOs (one with a transcript) and eight ARRL
-W1AW broadcasts with exact text. It is what D-19 was calibrated on and what found D-12. It
+W1AW broadcasts with exact text. It is what `decisions.md` D-24 was calibrated on and what found D-14. It
 is not committed; that is still the open decision. The paragraphs below are the original
 entry.
 
@@ -546,28 +723,66 @@ callsign, `DL4`). A weaker tone-lock-plus-character-count assertion is possible 
 
 ---
 
-## G-2 — Never run on a physical device · High (as a risk)
+## G-2 — Run on an emulator and one phone · Medium (as a risk)
 
-**Partly addressed 2026-11-09.** The app has now run on a phone (Android 16, API 36) over
-USB: install, mic permission, auto-start listening, the foreground service, and live
-decoding from the raw mic all work. `tools/device-run.sh` drives it and a debug-only tap
-(`DebugTap`) logs its output and dumps what the mic hears. Still unexercised: SAF import
-through `MediaCodec` (below), audio focus, Bluetooth routing, screen-off sessions. One UI
-finding: on a 1080x2392 screen the transcript box shows about two lines.
+**Real hardware since 2026-11-09.** The app has run on a phone (Android 16, API 36) over
+USB: install, mic permission, auto-start listening, the foreground service and live decoding
+from the mic all work. `tools/device-run.sh` drives it, and a debug-only tap (`DebugTap`)
+logs its output and dumps what the mic hears. It is what found D-14 — the phone's
+UNPROCESSED source swallowing mark onsets — which no emulator or synthetic channel showed.
+Still unexercised on hardware: SAF import through `MediaCodec`, audio focus, Bluetooth
+routing, screen-off sessions, and any phone but one. One UI finding: on a 1080x2392 screen
+the transcript box shows about two lines.
 
-The original entry:
+The emulator entry, as it stood:
 
-Everything is verified by unit test and compilation only. No AVD and no `cmdline-tools`
-are configured, so no build of this app has ever executed.
 
-Entirely unexercised as a result: microphone capture and `AudioRecord` buffer sizing,
-the foreground service and its wakelock, runtime permissions, SAF import through
-`MediaCodec`, audio-focus handling, Bluetooth mic routing, and every Compose layout at
-real screen sizes.
+**Downgraded from High on 2026-08-09: the app has now executed.** First run ever, on the
+`Medium_Phone_API_36.1` AVD (API 36, x86_64). The premise this entry carried was also wrong
+— an AVD *and* its system image were already installed; only `cmdline-tools` is missing, and
+that provides `sdkmanager`/`avdmanager`, which manage SDK packages and are not needed to
+build, install or run. Nothing was ever blocked on the toolchain.
 
-`AudioFileImporter` in particular is unproven against real device output. It assumes
-16-bit PCM from `MediaCodec` (`out.asShortBuffer()`); a device that emits float PCM would
-produce silence rather than an error.
+**Verified working on the emulator:**
+
+| Item | Result |
+|---|---|
+| Install, launch, first frame | 3.2 s cold start, no crash |
+| Compose layout at 1080×2400 | renders correctly; one clipped label (D-13) |
+| Runtime permissions | RECORD_AUDIO then POST_NOTIFICATIONS, in sequence; the ungranted state correctly shows Idle rather than pretending to listen |
+| Foreground service | `isForeground=true`, `types=0x80` (microphone), ongoing notification on channel `decoder` |
+| Notification permission denied | FGS still runs — denial does **not** break capture |
+| Microphone capture | live spectrum from the host mic; `AudioFlinger` record thread active |
+| Audio focus | requested at start (`USAGE_MEDIA` — see below) |
+| Stop | tears the foreground service down cleanly |
+
+**`AudioRecord` buffer sizing is answered, and it is a non-issue.** `MicCapture.captureLoop`
+reads a fixed `ShortArray(1280)` — 80 ms — and feeds exactly that to the engine regardless of
+what `getMinBufferSize` returns; the hardware buffer only sizes `AudioRecord`'s internal
+ring. Combined with D-20's chunk-invariance, **N-2's device-side concern is closed**: the
+caller's buffer cannot reach the transcript by either route.
+
+**Found by running it:** `known-issues` **D-12** (the UI can report Listening with no service
+— High) and **D-13** (readouts showing values they do not have). Neither is reachable from the
+JVM suite.
+
+**Still unexercised, and why the risk is not closed:**
+
+- **A real microphone.** An emulator's mic is the host's, with the host's AGC and its own
+  resampling; nothing it reports about capture quality, noise floor or the keying threshold
+  transfers to a phone in a room next to a radio. This is the whole point of the app and it
+  remains untested.
+- **SAF import end to end.** The picker opens; a decode of a pushed WAV was not completed, so
+  `AudioFileImporter` and `MediaCodec` are still unproven. It assumes 16-bit PCM
+  (`out.asShortBuffer()`) and a device emitting float PCM would produce **silence rather than
+  an error**.
+- Rotation and configuration change, the settings screen, audio-focus behaviour under a real
+  interruption (a call, another app), Bluetooth SCO routing, wakelock behaviour with the
+  screen off, and any screen size other than this one.
+
+Audio focus is requested as `USAGE_MEDIA` for a capture-only app, which is worth a look — it
+is the attribute for playback, and a recorder ducking other apps under a media usage is at
+best an odd claim to make to the platform.
 
 ---
 

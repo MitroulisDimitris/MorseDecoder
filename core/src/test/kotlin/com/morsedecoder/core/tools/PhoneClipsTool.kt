@@ -14,7 +14,7 @@ import java.io.File
  * `tools/device-run.sh` plays through a loudspeaker while the app listens on a phone, plus
  * a 30 s silent clip for the quiet-room capture. A no-op unless the directory is set.
  *
- *   PHONE_CLIPS_OUT=clips gradlew :core:test --tests "*PhoneClipsTool*"
+ *   PHONE_CLIPS_OUT=device-test/clips gradlew :core:test --tests "*PhoneClipsTool*"
  *
  * Deterministic: the same seeds give the same audio on any machine, so the clips do not
  * have to be committed (committing audio is still an open decision, `progress.md`).
@@ -22,9 +22,10 @@ import java.io.File
  *
  * Writes, next to the WAVs:
  * - `truth.tsv` — `<clip>.wav<TAB><reference text>`, for `tools/score-device.py`;
- * - `cases.tsv` — the same references pointed at `run/<clip>.wav`, for replaying a
+ * - `cases.tsv` — the same references pointed at `../run/<clip>.wav`, for replaying a
  *   device run's captures with `RealAudioBench` (`REAL_DIR=<this dir>`, after
- *   `tools/device-run.sh <this dir>/run ...`).
+ *   `tools/device-run.sh <this dir>/../run ...`). The committed copy is `device-test/clips/`,
+ *   so a run lands in `device-test/run/`, which is gitignored.
  *
  * Each clip carries 3 s of silence at both ends: the device run measures how the app
  * behaves before the signal starts and after it stops, not just during it.
@@ -103,7 +104,7 @@ class PhoneClipsTool {
 
         File(out, "truth.tsv").writeText(truth.toString())
         File(out, "cases.tsv").writeText(
-            truth.lineSequence().filter { it.isNotBlank() }.joinToString("\n") { "run/$it" } + "\n",
+            truth.lineSequence().filter { it.isNotBlank() }.joinToString("\n") { "../run/$it" } + "\n",
         )
     }
 }

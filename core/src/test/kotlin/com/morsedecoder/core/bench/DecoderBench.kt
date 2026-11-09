@@ -5,6 +5,7 @@ import com.morsedecoder.core.decode.FrontEnd
 import com.morsedecoder.core.decode.MorseDecoder
 import com.morsedecoder.core.live.LiveDecoderEngine
 import com.morsedecoder.core.metrics.TextMetrics
+import com.morsedecoder.core.synth.AcousticChannel
 import com.morsedecoder.core.synth.SyntheticMorseGenerator
 import com.morsedecoder.core.synth.SyntheticMorseGenerator.Config
 import com.morsedecoder.core.synth.SyntheticMorseGenerator.Hesitation
@@ -105,6 +106,34 @@ class DecoderBench {
         // predicts it cannot lock. The bench is where that prediction gets checked.
         Scenario("tone-700-mains", "700 Hz — a mains multiple, see known-issues D-3",
             Config(text = text, wpm = 18.0, toneHz = 700.0, snrDb = 10.0, seed = 26L)),
+
+        // ---- acoustic capture: speaker → room → phone mic --------------------------------
+        //
+        // Every scenario above delivers the signal by wire, which is not how the app is
+        // used. These four hold the tone, speed and fist of `clean-20`/`ac1-20@10` — cases
+        // the bench scores at 2.5 % — and change only the path from speaker to microphone.
+        // Any error here is therefore attributable to the channel and nothing else.
+        //
+        // They exist because a phone pointed at a Morse video was reported decoding to
+        // gibberish at a *correct* tone and a *plausible* WPM, and no wire-delivered fixture
+        // reproduces that. See `AcousticChannel` for the mechanism. Read them against
+        // `clean-20` and `ac1-20@10`, never in the mean.
+        Scenario("room-near", "phone a foot from the speaker — RT60 0.25 s, 30 % wet",
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 15.0, seed = 27L,
+                acoustic = AcousticChannel.Config(rt60S = 0.25, reverbMix = 0.30))),
+        Scenario("room-far", "phone across a hard-floored room — RT60 0.6 s, 55 % wet",
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 28L,
+                acoustic = AcousticChannel.Config(rt60S = 0.60, reverbMix = 0.55))),
+        Scenario("mic-agc", "capture AGC only, no reverb — isolates the gap-filling half",
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 12.0, seed = 29L,
+                acoustic = AcousticChannel.Config(agc = AcousticChannel.Agc()))),
+        Scenario("video-phone", "the reported case: laptop speaker, room, phone mic, AGC",
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 12.0, seed = 30L,
+                acoustic = AcousticChannel.Config(
+                    rt60S = 0.35, reverbMix = 0.35,
+                    highPassHz = 250.0, lowPassHz = 6000.0,
+                    agc = AcousticChannel.Agc(),
+                ))),
     )
 
     private fun variants(): List<Variant> {
@@ -114,8 +143,25 @@ class DecoderBench {
             Variant("fixedWin", d.copy(adaptiveWindow = false)),   // pre-FR-2.7
             Variant("noKeyGate", d.copy(requireKeyingToLock = false)),
             Variant("noDeadEnd", d.copy(unprovenLockMs = Double.MAX_VALUE, unkeyedLockSweeps = Int.MAX_VALUE)),
+            Variant("noStall", d.copy(stalledLockMs = Double.MAX_VALUE)),   // D-9 / D-23
+            // D-21's periodic re-fit was the newest live-path behaviour change and had no
+            // ablation here, so it was the one recent change the matrix could not attribute.
+            Variant("noRefit", d.copy(rebootstrapEnabled = false)),         // D-2 / D-21
             Variant("band1200", d.copy(bandMaxHz = 1200.0)),
             Variant("noFitGate", d.copy(outputGateEnabled = false)),
+            // decisions D-24: the real-room noise guards, one at a time and all together.
+            Variant("noSteadyK", d.copy(steadyKeying = false)),
+            Variant("noRagHold", d.copy(steadyLowSignal = false)),
+            Variant("noAcqKey", d.copy(acquireRequiresKeying = false)),
+            Variant("noLocFloor", d.copy(localPeakFloor = false)),
+            Variant("noRecentre", d.copy(recentreMaxHz = 0.0)),
+            Variant(
+                "noRealRoom",
+                d.copy(
+                    steadyKeying = false, steadyLowSignal = false, acquireRequiresKeying = false,
+                    localPeakFloor = false, recentreMaxHz = 0.0,
+                ),
+            ),
             Variant(
                 "preD13",
                 d.copy(

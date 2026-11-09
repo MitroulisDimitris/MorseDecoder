@@ -7,3 +7,4 @@ out/
 captures/
 .externalNativeBuild/
 .cxx/
+device-test/run*/

@@ -1,3 +1,5 @@
 # Shell scripts must keep LF endings on every checkout: bash on Windows (Git Bash)
 # rejects CRLF with "$'\r': command not found", and core.autocrlf would convert them.
 *.sh text eol=lf
+# Audio fixtures are binary: never let line-ending conversion near them.
+*.wav binary

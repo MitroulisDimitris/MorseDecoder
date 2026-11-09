@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * destroys the envelope and NS can gate the tone entirely.
  *
  * The order is reversed from the requirement as written, on measurement
- * (`known-issues.md` D-12, `decisions.md` D-20). On the test phone, UNPROCESSED — and MIC
+ * (`known-issues.md` D-14, `decisions.md` D-25). On the test phone, UNPROCESSED — and MIC
  * and CAMCORDER — gate the start of every mark after silence: a dash after a character
  * gap began 150 ms late and read as a dot, with no effect attached to the session, so
  * nothing here could switch it off. VOICE_RECOGNITION matched all 154 elements of the same

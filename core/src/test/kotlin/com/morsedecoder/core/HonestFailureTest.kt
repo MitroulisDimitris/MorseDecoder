@@ -107,6 +107,168 @@ class HonestFailureTest {
     }
 
     /**
+     * D-1's reproducer, restored (step 4a). A clean 20 WPM signal decoded against a unit
+     * pinned at 40 WPM — the octave-type scale error the defect is about.
+     *
+     * The pin (FR-9.5) is the *vehicle*, not the defect. It is the only supported way to
+     * hand the decoder a unit known to be wrong, now that D-17 has stopped the bootstrap
+     * producing one on any synthetic fixture; the real recording still bootstraps its own,
+     * reading 30.6 WPM against a true 17.7, and is uncommitted (G-1). What the pin buys is
+     * a scale error that can be *constructed on demand* rather than waited for.
+     *
+     * This test guards the reproducer itself. The previous one evaporated silently — D-17
+     * removed the input that triggered it and the test went green without anything having
+     * been fixed — so the premise is asserted separately from the defect. It holds under
+     * any legitimate fix: a decoder that suppressed this output would score 100 % here, a
+     * decoder that decoded it correctly would score near zero and this would fail loudly.
+     */
+    @Test
+    fun `a unit pinned an octave out does not reproduce the text`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val engine = LiveDecoderEngine()
+        engine.pinWpm(40.0)          // true speed is 20
+        feed(engine, gen.samples)
+        val cer = TextMetrics.cer(gen.normalizedText, decoded(engine))
+        assertTrue(cer > 0.5) {
+            "a 2x unit error decoded at CER $cer — the scale-error reproducer has gone, " +
+                "and D-1 has nothing holding it again"
+        }
+    }
+
+    /**
+     * D-1 itself: **something has to notice a scale error.**
+     *
+     * Against the fixture above the decoder emits 202 characters for 62 sent at 297 % CER,
+     * 98.5 % of them `E`/`T`/`I`/`M`, and until step 4 reported `fit 1.00` over a full
+     * observation window with `outputSuppressed` false and the lock state LOCKED — maximum
+     * confidence beside `TA C Q TEE E EEE EEET ETTTT ET TEEE TETE TET T EEEE`.
+     *
+     * `fitQuality` still reads 1.00 here and that is **correct**, not a residual bug.
+     * `ObservationFit` scores 2-means clusters over *normalised* durations
+     * `ln(duration / unit)`, and the score is separation x ratio x tightness over those
+     * clusters — every term invariant to the unit, because Morse timing is scale-free. The
+     * model does fit its own measurements; the measurements are referred to the wrong unit.
+     * Forcing that number down would make it lie about the question it answers.
+     *
+     * So the assertion is deliberately broad — *any* signal may be the one that speaks —
+     * and `outputImplausible` is what answers it (`decisions.md` D-22): the decoded
+     * characters average 1.03 marks each against 3.4 for real text.
+     */
+    @Test
+    fun `a decode built on a wrong unit is flagged by some signal`() {
+        val gen = SyntheticMorseGenerator.generate(
+            Config(text = text, wpm = 20.0, toneHz = 612.0, snrDb = 10.0, seed = 12L)
+        )
+        val engine = LiveDecoderEngine()
+        engine.pinWpm(40.0)
+        feed(engine, gen.samples)
+
+        val out = decoded(engine)
+        val letters = out.filter { it != ' ' }
+        val singles = letters.count { it in "ETIM" }.toDouble() / maxOf(1, letters.length)
+        val noticed = engine.outputImplausible || engine.outputSuppressed ||
+            (engine.fitQuality ?: 1.0) <= engine.gateSuppressBelow
+        assertTrue(noticed) {
+            "emitted ${engine.transcript.size} characters for " +
+                "${gen.normalizedText.count { it != ' ' }} sent at CER " +
+                "${"%.3f".format(TextMetrics.cer(gen.normalizedText, out))}, " +
+                "${"%.0f".format(100 * singles)} % of them E/T/I/M, and reported fit " +
+                "${engine.fitQuality?.let { "%.2f".format(it) }} with outputSuppressed " +
+                "${engine.outputSuppressed} and marksPerChar " +
+                "${engine.marksPerChar?.let { "%.2f".format(it) }} in state ${engine.lockState}"
+        }
+    }
+
+    /**
+     * The other side of the same guard, and the one that matters more: a **healthy** decode
+     * must not be flagged.
+     *
+     * The margin behind `outputImplausible` is 1.5x on a synthetic corpus, and the two rows
+     * that bind it — `hesitation` at 2.38 marks per character and `hand-13-rough` at 2.60 —
+     * are the two most human fixtures there are. That is the exact shape of the mistake
+     * `progress.md` lesson 5 records: a threshold fitted to synthetic rows that rejects
+     * genuine hand-sent Morse. This asserts the fixtures nearest the line stay on the right
+     * side of it, so a future change to the statistic cannot quietly cross over.
+     */
+    @Test
+    fun `a rough fist and a hesitant sender are not flagged as implausible`() {
+        for (cfg in listOf(
+            // hesitation: human pauses at word and character boundaries, 39 % CER
+            Config(text = text, wpm = 16.0, toneHz = 612.0, snrDb = 10.0,
+                hesitation = SyntheticMorseGenerator.Hesitation(), seed = 22L),
+            // the rough fist, 66 % CER — decoded badly, but decoded
+            Config(text = text, wpm = 13.0, toneHz = 588.0, snrDb = 5.0,
+                dashDotRatio = 2.1, jitterFraction = 0.25, charBiasFraction = 0.12, seed = 16L),
+        )) {
+            val gen = SyntheticMorseGenerator.generate(cfg)
+            val engine = LiveDecoderEngine()
+            feed(engine, gen.samples)
+            assertTrue(!engine.outputImplausible) {
+                "flagged a genuine ${cfg.wpm} WPM transmission as implausible at " +
+                    "${engine.marksPerChar?.let { "%.2f".format(it) }} marks per character"
+            }
+        }
+    }
+
+    /**
+     * D-11, split out of D-1 when D-22 closed its scale-error half.
+     *
+     * `hesitation` — a human pausing at word and character boundaries — decodes at 39 % CER
+     * while every signal the system publishes reads healthy: `fit 1.00`, nothing suppressed,
+     * 2.73 marks per character (normal), and mean lattice confidence **0.978**. A correct
+     * decode of the same text reports 0.995. Four characters in ten are wrong and the
+     * decoder's own confidence has moved by less than two points.
+     *
+     * Confidence is the obvious candidate and it is measured *inverted*: `qsb-impulse` at
+     * 41.8 % CER reports 0.990, above `hand-18` at 10.1 % CER on 0.943. It is a
+     * within-lattice quantity — how far the winning path beat its rivals — and under a wrong
+     * model the rivals are wrong too, so the winner still wins comfortably.
+     *
+     * The bar here is deliberately weak: *any* published signal need only separate this from
+     * a clean decode of the same text by a visible margin. Nothing does.
+     */
+    @Test
+    @KnownFailure("D-11", "a 39 % CER decode looks identical to a correct one")
+    fun `a decode two-fifths wrong is distinguishable from a correct one`() {
+        fun measure(cfg: Config): Triple<Double, Double?, Double> {
+            val gen = SyntheticMorseGenerator.generate(cfg)
+            val engine = LiveDecoderEngine()
+            feed(engine, gen.samples)
+            val conf = engine.transcript.map { it.confidence }.average()
+            return Triple(
+                TextMetrics.cer(gen.normalizedText, decoded(engine)),
+                engine.fitQuality,
+                conf,
+            )
+        }
+
+        val (goodCer, goodFit, goodConf) = measure(
+            Config(text = text, wpm = 16.0, toneHz = 612.0, snrDb = 10.0, seed = 22L)
+        )
+        val (badCer, badFit, badConf) = measure(
+            Config(text = text, wpm = 16.0, toneHz = 612.0, snrDb = 10.0,
+                hesitation = SyntheticMorseGenerator.Hesitation(), seed = 22L)
+        )
+        assertTrue(badCer > 3 * goodCer + 0.2) {
+            "fixture is not the intended comparison: $goodCer vs $badCer"
+        }
+
+        val fitDrop = (goodFit ?: 1.0) - (badFit ?: 1.0)
+        val confDrop = goodConf - badConf
+        assertTrue(fitDrop > 0.1 || confDrop > 0.1) {
+            "a decode at ${"%.0f".format(100 * badCer)} % CER reports fit " +
+                "${badFit?.let { "%.2f".format(it) }} and confidence " +
+                "${"%.3f".format(badConf)}, against fit " +
+                "${goodFit?.let { "%.2f".format(it) }} and confidence " +
+                "${"%.3f".format(goodConf)} for the same text at " +
+                "${"%.0f".format(100 * goodCer)} % — a drop of " +
+                "${"%.2f".format(fitDrop)} and ${"%.3f".format(confDrop)}"
+        }
+    }
+
+    /**
      * Below the calibrated SNR floor, accuracy targets are explicitly void — being *wrong*
      * is allowed. Being confidently verbose is not: P-4 asks for a decoder that declines
      * rather than one that produces plausible-looking output from unusable input.

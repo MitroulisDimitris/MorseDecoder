@@ -27,7 +27,7 @@ class ExportTest {
         ),
     ) = RobustTimingDecoder.DecodedChar(
         token = token, confidence = confidence, tStartMs = tStartMs,
-        unitMsLocal = 60.4, unitMsGlobal = 61.2, fitQuality = 0.91,
+        unitMsLocal = 60.4, unitMsRaw = 59.8, unitMsGlobal = 61.2, fitQuality = 0.91,
         isWordStart = isWordStart, elements = elements,
     )
 

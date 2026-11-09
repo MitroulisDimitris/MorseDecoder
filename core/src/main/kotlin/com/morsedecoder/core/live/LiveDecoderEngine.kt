@@ -10,6 +10,7 @@ import com.morsedecoder.core.dsp.Spectrum
 import com.morsedecoder.core.model.GaussianMixture
 import com.morsedecoder.core.model.KalmanUnit
 import com.morsedecoder.core.model.ObservationFit
+import com.morsedecoder.core.model.OutputPlausibility
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -130,6 +131,24 @@ class LiveDecoderEngine(
         val relockPoorElements: Int = 20,       // FR-2.10.1 — elements, never seconds
         val relockFitThreshold: Double = 0.45,
         val relockScoreMargin: Double = 1.5,    // FR-2.10.3
+        /**
+         * D-9 stalled-lock recovery: how long a lock may commit **no character at all**
+         * before a keyed signal elsewhere in the band may take it. [Double.MAX_VALUE]
+         * disables it, which is how the ablation and the D-7 regression tests turn it off.
+         *
+         * This is the one guard in FR-2.10 counted in **seconds**, and it is only sound
+         * because of the condition it is conjoined with. The element counters cannot reach
+         * this case: the operator moves frequency, the old lock produces no elements at all,
+         * so `poorElements` never advances and `lowSignal` suspends the check anyway
+         * (`known-issues` D-9 — measured at 2 characters for a whole 75 s transmission).
+         * A timer is the only thing that observes "nothing is happening here".
+         *
+         * **What keeps silence safe is the keyed alternative, not the clock** (AC-9). A
+         * 30 s pause offers no keyed peak, so the second condition never holds and the
+         * timer alone can never fire. 10 s on its own would be unsafe — a very slow
+         * Farnsworth sender leaves gaps that long between words.
+         */
+        val stalledLockMs: Double = 10_000.0,
         val bootstrapMinMarks: Int = 8,
         /**
          * Widest dash/dot ratio a bootstrap seed may claim before it is discarded as a
@@ -139,6 +158,24 @@ class LiveDecoderEngine(
          */
         val bootstrapMaxRatio: Double = 4.5,
         val commitHorizonChars: Int = 2,        // NFR-2 Viterbi horizon
+
+        // ---- Periodic re-bootstrap (D-2) ---------------------------------------------
+        // The live path seeds its unit once, from the first 8 marks, and tracks from there.
+        // When that seed is wrong the streaming tracker cannot escape it: a wrong unit
+        // mis-segments the stream, and the mis-segmentation feeds the tracker measurements
+        // that keep the wrong unit alive. A batch re-fit clusters the recent *marks*
+        // directly (dots vs dashes), which is independent of the decoder's segmentation, so
+        // it reads the true unit even while the decode is confused. Adopted only on a
+        // material disagreement, so a healthy lock is never disturbed (the reset costs the
+        // uncommitted tail). Element-counted, never timed — silence cannot trigger it (AC-9).
+        /** false = the pre-D-2 commit-once behaviour, kept for A/B in the bench. */
+        val rebootstrapEnabled: Boolean = true,
+        /** Check cadence, in committed marks since the last check. */
+        val rebootstrapEveryMarks: Int = 16,
+        /** Marks of history the batch re-fit clusters over. */
+        val rebootstrapWindowMarks: Int = 48,
+        /** Adopt only when the batch and tracked units differ by more than this ratio. */
+        val rebootstrapMaterialRatio: Double = 1.3,
 
         // ---- Output gate (P-4 honest failure / FR-5.8) -------------------------------
         // Suppresses character emission when the signal does not fit a coherent Morse
@@ -186,8 +223,16 @@ class LiveDecoderEngine(
          */
         val steadyLowSignal: Boolean = true,
         val lowSignalMaxSteadiness: Double = 4.0,
-        /** Every acquisition sweep, not only the first, must see the peak keyed. */
+        /**
+         * Acquisition counts only keyed sweeps toward [acquireSweeps], not merely present
+         * ones, within [acquireWindowSweeps]. An unkeyed sweep is neutral rather than a
+         * miss: the first version counted it as a miss, which restarted acquisition on
+         * weak and slow real tones (DecoderBench `noise-20@-5` 1.3 -> 13.9 %, `slow-7`
+         * 1.3 -> 5.1 %, `room-near` 7.6 -> 17.7 %).
+         */
         val acquireRequiresKeying: Boolean = true,
+        /** Sweeps an acquisition may take to collect its keyed hits (~2 s). */
+        val acquireWindowSweeps: Int = 20,
         /**
          * Peaks are judged against the median power within +/-[localFloorHalfHz] rather
          * than the band median. Raw-mic room noise is a broad low-frequency hump; against
@@ -201,6 +246,12 @@ class LiveDecoderEngine(
          * by [relockScoreMargin], after this many consecutive sweeps. 0 disables. Safe for
          * AC-9 for the same reason the D-13 guards are: it never touches a proven lock,
          * and silence offers no keyed peak.
+         *
+         * Overlaps the D-9 stalled-lock rule ([stalledLockMs]) but is not redundant with it:
+         * the stall rule hands over to a **candidate's** smoothed frequency, which wanders
+         * +/-45 Hz, while giving way here returns to SEARCHING and acquires the tone fresh.
+         * Measured on the D-13 dead-lock fixture: 1462 Hz with this, 1486 Hz without — out
+         * of the tracker's reach. On 14 phone captures it made no difference either way.
          */
         val unprovenYieldSweeps: Int = 3,
         /**
@@ -220,11 +271,21 @@ class LiveDecoderEngine(
         val recentreSweeps: Int = 5,
         /**
          * Remove the keying weight - a constant offset on every mark and gap - before any
-         * model sees the elements ([KeyingWeight], `known-issues.md` D-12). Room echo on a
-         * phone's raw mic took ~20 ms off every mark. false = raw durations, the pre-D-20
-         * behaviour.
+         * model sees the elements ([KeyingWeight]). **Off by default** (`decisions.md`
+         * D-25): the phone symptom it was built for was fixed at the mic source, and on noise
+         * it fits a weight that makes random durations look like Morse.
          */
         val keyingWeight: Boolean = false,
+        // ---- Output plausibility (D-1) -----------------------------------------------
+        // The gate above cannot see a unit-scale error: it keys off `fitQuality`, and
+        // Morse timing is scale-free, so a wrong scale leaves every timing score intact.
+        // These two describe the one signal that does see it — the decoded characters
+        // themselves. It reports and never suppresses; see [OutputPlausibility].
+        /** Committed characters the plausibility statistic averages over. */
+        val plausibilityWindowChars: Int = OutputPlausibility.DEFAULT_WINDOW,
+        /** Mean marks per character below which the transcript cannot be real text. */
+        val implausibleMarksPerChar: Double = OutputPlausibility.DEFAULT_IMPLAUSIBLE_BELOW,
+        // ------------------------------------------------------------------------------
     )
 
     enum class LockState { SEARCHING, ACQUIRING, LOCKED, DEGRADED }
@@ -339,6 +400,27 @@ class LiveDecoderEngine(
      * held off the ceiling; [wpm] reads as nothing in both cases, and this says why.
      */
     val speedImplausible: Boolean get() = kalman?.atSpeedCeiling ?: bootstrapTooFast
+
+    /**
+     * P-4 honest failure, the case no timing signal can reach: **the decoded characters
+     * cannot be text** (`known-issues.md` D-1).
+     *
+     * A unit an octave short shatters every character into single elements, and because
+     * Morse timing is scale-free `fitQuality` reads a serene 1.00 throughout — measured at
+     * 297 % CER with `outputSuppressed` false and the lock LOCKED. This is the signal that
+     * notices, and it is deliberately **only** a signal: nothing is suppressed on it. See
+     * [OutputPlausibility] for the measured margin and why it is not a gate.
+     */
+    val outputImplausible: Boolean get() = plausibility.implausible
+
+    /**
+     * Mean marks per committed character over the recent window — the number behind
+     * [outputImplausible]. Null until the window fills; real text sits near 3.4.
+     */
+    val marksPerChar: Double? get() = plausibility.marksPerChar
+
+    /** The threshold in force, exposed so a debug readout can mark it. */
+    val implausibleBelowMarksPerChar: Double get() = plausibility.threshold
     val candidates: List<Double>
         get() = candidateList
             .filter { nowMs() - it.firstSeenMs >= cfg.candidateSustainMs }
@@ -360,7 +442,14 @@ class LiveDecoderEngine(
     var spectrum: FloatArray = FloatArray(0); private set
     val spectrumBins = 64
 
-    fun nowMs(): Double = totalSamples * 1000.0 / sampleRate
+    /**
+     * The processing clock, driven by [curSample] — the sample position of the event being
+     * processed, not the write head. This is what makes the decode a pure function of the
+     * sample stream rather than of the caller's buffer size (N-2): a sweep at sample P
+     * timestamps at P whether P arrived alone or in the middle of a large chunk. Between
+     * feeds [curSample] equals [totalSamples], so external readers see the current time.
+     */
+    fun nowMs(): Double = curSample * 1000.0 / sampleRate
 
     // ---- internals ----
     private val maxWin = (cfg.windowMaxMs * sampleRate / 1000.0).toInt()
@@ -368,9 +457,14 @@ class LiveDecoderEngine(
     private val hop = (cfg.hopMs * sampleRate / 1000.0).toInt()
     private val ringSize = 16_384
     private val ring = FloatArray(ringSize)
+    /** Write head: total samples ever received. */
     private var totalSamples = 0L
+    /** Processing cursor: the position of the frame or sweep currently being handled. */
+    private var curSample = 0L
     private var nextFrameStart = 0L
-    private var nextSweepMs = 0.0
+    private val sweepIntervalSamples = max(1, (cfg.sweepIntervalMs * sampleRate / 1000.0).toInt())
+    /** Absolute sample position of the next sweep — fixed on the stream, not on chunks. */
+    private var nextSweepSample = sweepIntervalSamples.toLong()
     private val frameScratch = FloatArray(maxWin)   // sized for the widest window FR-2.7 allows
 
     private var goertzel: Goertzel? = null
@@ -387,6 +481,7 @@ class LiveDecoderEngine(
     private var acqFreq = 0.0
     private var acqHits = 0
     private var acqMisses = 0
+    private var acqSweeps = 0
 
     // keying / run-length state
     private var keyState = false
@@ -404,12 +499,27 @@ class LiveDecoderEngine(
     private var bootstrapTooFast = false
     private var needResync = true          // FR-4.2: discard a partial leading character
     private val obsFit = ObservationFit()
+    private val plausibility = OutputPlausibility(
+        window = cfg.plausibilityWindowChars,
+        implausibleBelow = cfg.implausibleMarksPerChar,
+    )
     private var poorElements = 0
     private var lastLockChangeMs = -1e12
     /** Consecutive sweeps the current lock has carried signal without keying (D-13). */
     private var unkeyedSweeps = 0
     /** Characters emitted under the current lock — zero means it has proven nothing. */
     private var charsSinceLock = 0
+    /**
+     * When the current lock last committed a character, or when it was taken. Drives the
+     * D-9 stalled-lock check; committed characters rather than elements, because in the
+     * stranded state the front end still produces elements from noise at the dead frequency.
+     */
+    private var lastCharMs = 0.0
+    /** Recent post-bootstrap mark log-durations, for the D-2 batch re-fit. */
+    private val refitMarks = ArrayDeque<Double>()
+    private var marksSinceRefit = 0
+    /** Count of adopted re-bootstraps under the current lock — telemetry / test hook. */
+    var rebootstraps = 0; private set
 
     // Envelope history at the lock, for the steadiness half of the low-signal guard.
     private val envHist = DoubleArray((cfg.floorWindowMs / cfg.hopMs).toInt())
@@ -449,18 +559,39 @@ class LiveDecoderEngine(
         }
         totalSamples += count
 
-        if (lockState == LockState.LOCKED || lockState == LockState.DEGRADED) {
-            while (nextFrameStart + win <= totalSamples) {
+        // Process frame and sweep events in sample-position order, each reading the window
+        // that ends at its own position, so the transcript is a pure function of the sample
+        // stream and not of how it was split into feed() calls (N-2). A frame occupies
+        // [nextFrameStart, nextFrameStart+win); a sweep at S analyses the FFT window ending
+        // at S. Frames only exist once locked, so before a lock only sweeps fire — and a
+        // sweep that locks mid-chunk starts the frame grid at its own position, so the rest
+        // of the chunk frames from there.
+        while (true) {
+            val framePos = if (lockState == LockState.LOCKED || lockState == LockState.DEGRADED)
+                nextFrameStart + win else Long.MAX_VALUE
+            val sweepPos = nextSweepSample
+            val next = minOf(framePos, sweepPos)
+            if (next > totalSamples) break
+            if (framePos <= sweepPos) {
+                curSample = framePos
                 processFrame(nextFrameStart)
                 nextFrameStart += hop
+            } else {
+                curSample = sweepPos
+                // Skip only if the window is not (yet) available: before fftSize samples, or
+                // beyond the ring on a pathologically large chunk. Neither occurs for real
+                // AudioRecord buffers or the bench.
+                if (sweepPos >= cfg.fftSize && sweepPos - cfg.fftSize >= totalSamples - ringSize) {
+                    sweep()
+                }
+                nextSweepSample += sweepIntervalSamples
             }
-        } else {
-            nextFrameStart = totalSamples // no envelope until a lock exists
         }
-
-        while (nowMs() >= nextSweepMs) {
-            if (totalSamples >= cfg.fftSize) sweep()
-            nextSweepMs += cfg.sweepIntervalMs
+        curSample = totalSamples
+        // No envelope until a lock exists: keep the frame grid at the write head so a lock
+        // begins framing from the lock instant (set precisely in resetSignalPath).
+        if (lockState != LockState.LOCKED && lockState != LockState.DEGRADED) {
+            nextFrameStart = totalSamples
         }
     }
 
@@ -744,7 +875,94 @@ class LiveDecoderEngine(
         } else {
             dec.feed(run)
             drainDecoder()
+            // D-2: re-fit the unit from a batch of recent marks and adopt on a material
+            // disagreement. Skipped while pinned (FR-9.5 owns the unit) and counted in marks,
+            // so a pause cannot trigger it (AC-9).
+            if (cfg.rebootstrapEnabled && run.isMark && !pinned && pinnedWpm == null) {
+                refitMarks.addLast(ln(run.durationMs))
+                while (refitMarks.size > cfg.rebootstrapWindowMarks) refitMarks.removeFirst()
+                if (++marksSinceRefit >= cfg.rebootstrapEveryMarks) {
+                    marksSinceRefit = 0
+                    maybeRebootstrap()
+                }
+            }
         }
+    }
+
+    /** 1-D 2-means over log durations → (lowerMean, upperMean). Shared by bootstrap and re-fit. */
+    private fun twoMeans(values: List<Double>): Pair<Double, Double> {
+        var c1 = values.min()
+        var c2 = values.max()
+        repeat(20) {
+            var s1 = 0.0; var n1 = 0
+            var s2 = 0.0; var n2 = 0
+            for (v in values) {
+                if (v - c1 <= c2 - v) { s1 += v; n1++ } else { s2 += v; n2++ }
+            }
+            if (n1 > 0) c1 = s1 / n1
+            if (n2 > 0) c2 = s2 / n2
+        }
+        return c1 to c2
+    }
+
+    /**
+     * D-2 batch re-fit: cluster the recent marks and, if the resulting unit disagrees
+     * materially with the tracked one, adopt it. The clustering sees dots and dashes
+     * directly, so it is immune to the mis-segmentation a wrong unit produces — which is the
+     * exact trap the streaming tracker cannot climb out of on its own.
+     */
+    private fun maybeRebootstrap() {
+        val k = kalman ?: return
+        if (refitMarks.size < cfg.bootstrapMinMarks) return
+        // 2-means over the recent mark log-durations — the same clustering `initFromBootstrap`
+        // uses, so the re-fit is the bootstrap re-run over a wider, more representative window.
+        // It sees dots and dashes directly, so it is immune to the mis-segmentation a wrong
+        // unit produces — the exact trap the streaming tracker cannot climb out of on its own.
+        val (c1, c2) = twoMeans(refitMarks.toList())
+        val dashOffset = c2 - c1
+        // Must be two dot/dash clusters at a fist-plausible ratio, not a single smear.
+        if (dashOffset < ln(1.8) || dashOffset > ln(cfg.bootstrapMaxRatio)) return
+        val u0 = kotlin.math.exp(c1)
+        if (u0 < KalmanUnit.MIN_UNIT_MS || u0 > 500.0) return
+        // Only when the tracked unit is genuinely elsewhere — otherwise the tracker is fine
+        // and a reset would only cost the uncommitted tail (P-2) for nothing.
+        if (abs(ln(u0) - ln(k.unitMs)) < ln(cfg.rebootstrapMaterialRatio)) return
+        adoptRebootstrap(k, u0, dashOffset)
+    }
+
+    /**
+     * Adopt the re-fitted unit **in place**, keeping the decoder, its lattice and the
+     * committed transcript. The models are relative to the unit (z = ln(dur/unit)) and the
+     * decoder holds these same `GaussianMixture` references, so resetting the means to
+     * structural values plus overriding the Kalman is a complete re-seed with no seam: no
+     * decoder rebuild, no dropped tail, and the uncommitted marks — true durations — simply
+     * re-score against the corrected unit on the next commit. Cheaper and less lossy than
+     * the re-lock path, which is right because the tone did not change, only the timebase.
+     */
+    private fun adoptRebootstrap(k: KalmanUnit, u0: Double, dashOffset: Double) {
+        k.overrideTo(u0)
+        // Hold the batch unit fairly firmly: `overrideTo` sets a tight (5 %) variance, and a
+        // modest inflation keeps the tracker able to follow real drift without immediately
+        // re-chasing the per-character bias that a wrong bootstrap decodes into. Inflating
+        // hard (×9) undid most of the correction within a few characters.
+        k.inflateVariance(2.25) // 5 % -> ~7.5 %
+        markMix?.let { mm ->
+            mm.means[0] = 0.0; mm.means[1] = dashOffset
+            mm.sigmas[0] = 0.25; mm.sigmas[1] = 0.25
+            mm.weights[0] = 0.5; mm.weights[1] = 0.5
+        }
+        gapMix?.let { gm ->
+            gm.means[0] = 0.0; gm.means[1] = ln(3.0); gm.means[2] = ln(7.0)
+            gm.sigmas[0] = 0.3; gm.sigmas[1] = 0.3; gm.sigmas[2] = 0.3
+            gm.weights[0] = 1.0 / 3; gm.weights[1] = 1.0 / 3; gm.weights[2] = 1.0 / 3
+        }
+        obsFit.clear()
+        // The characters behind the statistic were decoded against the unit just replaced,
+        // so they describe a timebase that no longer exists (D-1).
+        plausibility.clear()
+        fitQualityRaw = 1.0
+        poorElements = 0
+        rebootstraps++
     }
 
     /** Streaming bootstrap (FR-5.1 role): first elements seed the models, then flow on. */
@@ -755,17 +973,7 @@ class LiveDecoderEngine(
             bootstrapRuns.addAll(corrected)
         }
         val marks = bootstrapRuns.filter { it.isMark }.map { ln(it.durationMs) }
-        var c1 = marks.min()
-        var c2 = marks.max()
-        repeat(20) {
-            var s1 = 0.0; var n1 = 0
-            var s2 = 0.0; var n2 = 0
-            for (v in marks) {
-                if (v - c1 <= c2 - v) { s1 += v; n1++ } else { s2 += v; n2++ }
-            }
-            if (n1 > 0) c1 = s1 / n1
-            if (n2 > 0) c2 = s2 / n2
-        }
+        val (c1, c2) = twoMeans(marks)
         // The split has to describe dots and dashes, and a ratio no real fist produces
         // means it does not. `u0` is the *lower* cluster mean, so one glitch below the dots
         // sets the entire timebase on its own: measured on `hand-13-rough`, a 25 ms
@@ -838,6 +1046,8 @@ class LiveDecoderEngine(
             if (raggedEnvelope) continue
             transcript.add(ch)
             charsSinceLock++
+            lastCharMs = nowMs()
+            plausibility.add(ch.elements.count { it.isMark })
             events.add(Event.CharDecoded(ch))
         }
     }
@@ -855,18 +1065,29 @@ class LiveDecoderEngine(
                     acqFreq = best.freqHz
                     acqHits = 1
                     acqMisses = 0
+                    acqSweeps = 1
                     lockState = LockState.ACQUIRING
                 }
             }
             LockState.ACQUIRING -> {
-                val hit = peaks.firstOrNull {
-                    abs(it.freqHz - acqFreq) < 20.0 && (!cfg.acquireRequiresKeying || isKeyed(it.freqHz))
-                }
-                if (hit != null) {
-                    acqFreq = 0.7 * acqFreq + 0.3 * hit.freqHz
-                    if (++acqHits >= cfg.acquireSweeps) lockOn(acqFreq)
-                } else if (++acqMisses >= 3) {
-                    lockState = LockState.SEARCHING
+                val near = peaks.firstOrNull { abs(it.freqHz - acqFreq) < 20.0 }
+                if (near == null) {
+                    if (++acqMisses >= 3) lockState = LockState.SEARCHING
+                } else {
+                    // A present peak that fails the keying probe is neither a hit nor a
+                    // miss: a real tone fails it on some sweeps (a letter gap in the 600 ms
+                    // probe, a noisy window), and counting that as a miss restarted
+                    // acquisition on weak and slow signals. What bounds it is the window.
+                    // Only keyed hits move the estimate, or noise sweeps drag the lock.
+                    if (!cfg.acquireRequiresKeying || isKeyed(near.freqHz)) {
+                        acqHits++
+                        acqFreq = 0.7 * acqFreq + 0.3 * near.freqHz
+                    }
+                    if (acqHits >= cfg.acquireSweeps) {
+                        lockOn(acqFreq)
+                    } else if (++acqSweeps >= cfg.acquireWindowSweeps) {
+                        lockState = LockState.SEARCHING
+                    }
                 }
             }
             LockState.LOCKED, LockState.DEGRADED -> {
@@ -940,6 +1161,7 @@ class LiveDecoderEngine(
                 }
                 updateCandidates(peaks)
                 autoRelockCheck(peaks, near)
+                stalledLockCheck()
             }
         }
     }
@@ -948,7 +1170,7 @@ class LiveDecoderEngine(
         val n = cfg.fftSize
         val re = DoubleArray(n)
         val im = DoubleArray(n)
-        val start = totalSamples - n
+        val start = curSample - n // window ends at the event position, not the chunk head (N-2)
         for (i in 0 until n) {
             val w = 0.5 * (1.0 - cos(2.0 * PI * i / (n - 1)))
             re[i] = ring[((start + i) % ringSize).toInt()] * w
@@ -1054,10 +1276,14 @@ class LiveDecoderEngine(
         }
     }
 
-    /** Envelope spread at [freqHz] over the most recent audio; 0.0 when too little exists. */
+    /**
+     * Envelope spread at [freqHz] over the audio ending at the current processing position;
+     * 0.0 when too little exists. Anchored to [curSample] so a sweep's keying test reads the
+     * same window it found the peak in, regardless of chunking (N-2).
+     */
     fun keyingSpreadAt(freqHz: Double): Double {
-        if (totalSamples < probeSamples) return 0.0
-        val start = totalSamples - probeSamples
+        if (curSample < probeSamples) return 0.0
+        val start = curSample - probeSamples
         for (i in 0 until probeSamples) {
             probeScratch[i] = ring[((start + i) % ringSize).toInt()]
         }
@@ -1103,6 +1329,90 @@ class LiveDecoderEngine(
         }
     }
 
+    /**
+     * D-9: the tone-jump deadlock. The operator moves frequency and the lock never follows,
+     * because the two guards that should notice cannot: `poorElements` counts elements and
+     * an abandoned frequency produces none, while FR-2.10.2 suspends the check entirely
+     * under `lowSignal`, which holds throughout. Measured: a 612 → 1150 Hz jump yields
+     * **2 characters** for a whole 75 s transmission, with the lock sitting at 612 Hz.
+     *
+     * So this deliberately bypasses both — it is the case they cannot see — and rests
+     * instead on a conjunction the guards can trust: nothing has been decoded here for
+     * [Config.stalledLockMs], **and** something elsewhere in the band is being keyed.
+     *
+     * The keying test is what makes it safe, and it is **not** the candidate test. FR-2.14
+     * candidacy is 6 dB + 100 Hz + 2 s sustain with no keying check at all, and a healthy
+     * 612 Hz decode offers spurious candidates at 1680, 840, 435 and 1017 Hz throughout —
+     * any of which could otherwise take a working lock during a pause. [keyedNow] is the
+     * discriminator, and silence supplies no keyed peak, which is what holds AC-9.
+     *
+     * Two conditions here were bought with a broken AC-9 rather than reasoned in advance,
+     * and both matter:
+     *
+     * - **The current lock must itself be silent.** Without this the rule fired 0.6 s after
+     *   the *same station* resumed from a 30 s pause, because the stall clock had long
+     *   expired and the returning signal threw a peak past the distance test. A keyed
+     *   frequency is not stranded, whatever the transcript says.
+     * - **The alternative must be ≥ [Config.candidateMinDistHz] away, not
+     *   [Config.relockMinDistHz].** The peak that stole that lock sat 40.4 Hz off — a
+     *   keying sideband of the signal already being tracked, clearing the 40 Hz bar by
+     *   0.4 Hz. FR-2.14's 100 Hz is the distance at which a peak is a *distinct signal*,
+     *   which is precisely the claim this rule has to make before taking a lock away.
+     *
+     * The pin still wins (FR-2.10.5) and the hold-off still applies (FR-2.10.4), so a fresh
+     * lock actually gets 15 s rather than 10 before this can consider it.
+     *
+     * **This spends the D-7 asymmetry deliberately** — a proven lock can now be taken away
+     * during a legitimate pause if another station happens to be keying. That trade was
+     * declined when D-7 was written and accepted by the owner on 2026-08-09, on the grounds
+     * that a stranded session is the more common and more damaging failure.
+     */
+    private fun stalledLockCheck() {
+        if (pinned) return                                           // FR-2.10.5
+        if (nowMs() - lastCharMs < cfg.stalledLockMs) return
+        if (nowMs() - lastLockChangeMs < cfg.relockHoldoffMs) return // FR-2.10.4
+        // A frequency that is being keyed is not stranded, whatever the transcript says —
+        // it may be mid-bootstrap, or its output gated. Only silence *here* means the
+        // operator has gone, and this is what stops the rule confusing "the station paused
+        // and came back" with "the station moved" (AC-9).
+        if (keyedNow(toneHz)) {
+            lastCharMs = nowMs()
+            return
+        }
+        // The target must be an established **candidate**, not merely this sweep's best
+        // peak. One sweep is not evidence enough to take a lock away: measured on
+        // `hand-13-rough`, a transient at 731 Hz out-ranked the real 588 Hz signal on a
+        // single sweep and won the lock, costing 18 characters.
+        //
+        // `candidates` is the existing FR-2.14 machinery for exactly this question —
+        // 30 Hz matching with an EMA across sweeps, 2 s of sustain, 1 s eviction, ordered
+        // by strength. Re-deriving it here with a private counter failed on peak jitter:
+        // the readings wander ±45 Hz between sweeps, so a naive same-frequency test never
+        // accumulates. Its 100 Hz minimum distance is also the right bar rather than a
+        // tolerated side effect: it is the distance at which FR-2.14 is willing to call a
+        // peak a separate signal, and separateness is this rule's entire premise.
+        val alt = candidates.firstOrNull { allowedLockFreq(it) && keyedNow(it) } ?: return
+        switchLock(alt, RelockTrigger.AUTOMATIC)
+    }
+
+    /**
+     * The keying test with no ablation switch in front of it.
+     *
+     * [isKeyed] short-circuits to true when [Config.requireKeyingToLock] is off, which is
+     * right for a *preference* between peaks. For the D-9 rule keying is the whole safety
+     * argument, so turning it off would leave a bare 10 s timer able to move a lock — the
+     * exact thing FR-2.10.1 exists to prevent.
+     */
+    private fun keyedNow(freqHz: Double): Boolean {
+        if (keyingSpreadAt(freqHz) < cfg.lockKeyingSpread) return false
+        // D-24 applies here more than anywhere: spread alone passes 29 % of 600 ms probes
+        // of real room noise, so on a phone it would both reset this lock's stall clock on
+        // noise and offer noise peaks as the keyed alternative. probeScratch still holds
+        // the probe keyingSpreadAt just filled.
+        return !cfg.steadyKeying ||
+            KeyingSpread.steadinessOf(probeScratch, sampleRate, freqHz) <= cfg.lockMaxSteadiness
+    }
+
     // ---- lock transitions ----
 
     private var lockAnchorHz = 0.0
@@ -1122,6 +1432,7 @@ class LiveDecoderEngine(
         needResync = true
         unkeyedSweeps = 0
         charsSinceLock = 0
+        lastCharMs = nowMs()
     }
 
     private fun switchLock(toHz: Double, trigger: RelockTrigger) {
@@ -1158,6 +1469,7 @@ class LiveDecoderEngine(
         bootstrapRuns.clear()
         bootstrapTooFast = false
         obsFit.clear()
+        plausibility.clear()
         fitQualityRaw = 1.0
         poorElements = 0
         outputSuppressed = false
@@ -1169,6 +1481,7 @@ class LiveDecoderEngine(
         candidateList.clear()
         unkeyedSweeps = 0
         charsSinceLock = 0
+        lastCharMs = nowMs()
         lockState = LockState.LOCKED
         lockedSinceMs = nowMs()
         lastLockChangeMs = nowMs()
@@ -1185,8 +1498,15 @@ class LiveDecoderEngine(
         envelopeNorm = 0f
         pendingRuns.clear()
         keyState = false
-        runStartSample = totalSamples
-        nextFrameStart = totalSamples
+        // A new lock starts its own re-fit history (D-2): marks from a wrong tone must not
+        // seed a re-bootstrap on the right one.
+        refitMarks.clear()
+        marksSinceRefit = 0
+        rebootstraps = 0
+        // Anchor the run and frame grids to the processing position (the lock instant when a
+        // sweep locks), not the write head, so the envelope framing is chunk-invariant (N-2).
+        runStartSample = curSample
+        nextFrameStart = curSample
         if (lowSignal) {
             lowSignal = false
             events.add(Event.LowSignal(false, nowMs()))

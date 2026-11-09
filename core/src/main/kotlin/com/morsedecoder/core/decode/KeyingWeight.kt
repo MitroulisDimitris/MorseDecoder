@@ -4,16 +4,17 @@ import kotlin.math.sqrt
 
 /**
  * Keying weight: a constant offset the receive chain adds to every mark and takes from
- * every gap (`known-issues.md` D-12, `decisions.md` D-20).
+ * every gap. **Off by default** (`decisions.md` D-25).
  *
  * A Schmitt threshold on an envelope that does not switch cleanly moves every boundary by
- * the same time, not the same fraction. Through a phone's raw mic, room echo makes each
- * mark ramp up over 30–50 ms and decay over 100–200 ms; at the decode thresholds every mark
- * came out ~20 ms short (60 ms dots measured 38, 180 ms dashes 160). The unit is estimated
- * from marks, so short dots read as fast sending, the gaps then look long against that
- * unit, and characters split into `E`/`T` fragments. The sign is not fixed — decay-heavy
- * rooms lengthen marks instead, which is what `decisions.md` D-2 anticipated — and nor is
- * the size: it moves with the room, the distance and the speed. Hence a rolling estimate.
+ * the same time, not the same fraction, and the unit is estimated from marks: short marks
+ * read as fast sending, the gaps then look long against that unit, and characters split into
+ * `E`/`T` fragments. Built for the phone captures of `known-issues.md` D-14, where every mark
+ * came out ~20 ms short in whole-file medians. That symptom turned out not to be a constant
+ * offset at all — the phone's UNPROCESSED input swallowed each mark's onset by an amount
+ * that grew with the silence before it — and was fixed at the source by switching to
+ * VOICE_RECOGNITION. This stays for a chain that does add a constant offset; enabled by
+ * default it fitted a "weight" to noise and broke AC-8 and the non-Morse tests.
  *
  * ### The estimate, and why it respects D-2
  *

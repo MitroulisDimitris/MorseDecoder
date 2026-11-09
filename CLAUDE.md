@@ -5,11 +5,11 @@ auto-detecting tone frequency and sending speed, tolerant of environmental noise
 human timing variation.
 
 **Status: working app, 12 commits.** Both decode paths are implemented and tested, the
-Compose UI is built, and the whole decoder is covered by a JVM test suite. It has run on
-one physical phone (2026-11-09): room noise was fooling the tone lock (`decisions.md` D-19)
-and the phone's UNPROCESSED mic was swallowing the start of every mark (D-20, the app now
-captures from VOICE_RECOGNITION). Device coverage is still partial (G-2), and re-running the
-full clip set on the new source is the first open step in `progress.md`.
+Compose UI is built, and the whole decoder is covered by a JVM test suite. It has run on an
+emulator (2026-08-09) and on **one real phone** (2026-11-09), where room noise was fooling the
+tone lock (`decisions.md` D-24) and the phone's UNPROCESSED mic was swallowing the start of
+every mark (D-25 — the app now captures from VOICE_RECOGNITION). A full device run on the new
+source is the first open step in `progress.md`; `device-test/README.md` is how.
 
 ## Read first
 
@@ -75,13 +75,14 @@ isn't the app that was specified. Each traces to a principle in §1 of the requi
 ## Testing
 
 ```sh
-./gradlew :core:test                                             # full suite, ~106 tests
+./gradlew :core:test                                             # full suite, ~118 tests
 BENCH=1 ./gradlew :core:test --tests "*DecoderBench*" -i         # scenario matrix + ablations
 BENCH=1 ./gradlew :core:test --tests "*StructureBench*" -i       # timing stats (the D-8 question)
 DIAG=1  ./gradlew :core:test --tests "*BootstrapDiagnostic*" -i  # what the live seed actually sees
 DIAG=1  ./gradlew :core:test --tests "*FileGateDiagnostic*" -i   # which file-path guard declined, and what it cost
 DIAG=1  ./gradlew :core:test --tests "*ResidualDiagnostic*" -i   # which stage the remaining error comes from
-REAL_DIR=<dir> ./gradlew :core:test --tests "*RealAudioBench*" -i       # both paths over real audio kept outside the repo
+DIAG=1  ./gradlew :core:test --tests "*ScaleErrorDiagnostic*" -i # what can and cannot see a wrong timebase
+REAL_DIR=<dir> ./gradlew :core:test --tests "*RealAudioBench*" -i       # both paths over real audio (device-test/)
 DIAG_WAV=<a.wav,b.wav> ./gradlew :core:test --tests "*NoiseFloorDiagnostic*" -i  # what room noise looks like to the guards
 ```
 
@@ -130,16 +131,26 @@ Each of these is a measured result, not a preference.
 
 ## Where it stands
 
-Live path mean CER **13.1 %** across 16 scenarios, worst case **65.9 %** on `hand-13-rough`
-(a rough 13 WPM fist). File path mean **15.6 %**. Those are `HistoryBench` figures;
-`DecoderBench` uses a shorter text and reports 14.9 % / 11.6 %, and the two are not
+Live path mean CER **12.3 %** across 16 scenarios on `DecoderBench` (worst decodable scenario
+`hand-13-rough` **65.8 %**), since D-20 made the live decode chunk-invariant and D-21 added the
+periodic re-bootstrap. File path mean
+**6.6 %** on `DecoderBench` since D-19 locked the pass-2 decode unit (`hand-13-rough`
+**36.7 %**). The older `HistoryBench` live figures (mean 13.1 %, worst 65.9 %) **predate D-20
+and would move if re-run**; `HistoryBench` is not in the repo. Rulers and text lengths are not
 interchangeable — see the caveat in `version-history.md`. All six milestones of §7 of the
 requirements are implemented, assists included — except FR-7.4's master switch, which is
 deliberately absent (`decisions.md` D-12).
 
-Open High defects: `known-issues.md` D-1, D-2, D-6, D-8, D-9, plus risks G-1 and G-2. The
-ordered plan — what is cheap, what is blocked, and what changed the priorities — is in
-`progress.md`.
+Open High defects: `known-issues.md` D-2, D-6, D-8, D-12, plus risk G-1. **The app now runs**
+(emulator, 2026-08-09) — G-2 is Medium, and D-12 (the UI can report *Listening* with nothing
+running) came out of that first run. D-9 closed with
+`decisions.md` D-23 — a lock that has decoded nothing for 10 s is handed to a distinct keyed
+signal elsewhere, taking a stranded 612 → 1150 Hz jump from 2 characters to 88. D-1 closed
+with `decisions.md` D-22 — a wrong *timebase* is now flagged by reading the decoded
+characters, because Morse timing is scale-free and no timing score can ever see one. Its
+residual half is D-11. The ordered plan — what is cheap, what is blocked, and what changed
+the priorities — is in `progress.md`; **every remaining step is blocked**: 7 on the real
+recording being supplied, 9 on an owner decision, 8 on the toolchain.
 
 ## Undecided
 

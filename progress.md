@@ -19,68 +19,75 @@ they are **not** the same sequence. Decision records are written `decisions D-16
 
 ## Update — 2026-11-09: first runs on a real phone
 
-**Read this before the 2026-08-05 summary below; it is older than what it describes.**
+**Read this before the 2026-08-09 summary below.**
 
-The app has now run on a phone (Android 16), driven over USB by `tools/device-run.sh`
-with the PC's loudspeaker playing ten generated clips (`PhoneClipsTool`). The first runs
-were bad — ~84–98 % CER — and two causes were found and fixed:
+The app has now run on a phone (Android 16), driven over USB by `tools/device-run.sh` with a
+PC loudspeaker playing ten generated clips (`device-test/`). The first runs decoded at
+~84–98 % CER, and two causes were found and fixed:
 
-- **Room noise looked like Morse to the tone lock** (`decisions.md` D-19). Fixed with a
-  steadiness test calibrated on real captures. Replayed captures: quiet room silent, tone
-  right in nearly every clip, automatic re-locks 13 → 5, `DecoderBench` worst case
-  89.9 → 74.7 %, nothing worse.
-- **The phone's UNPROCESSED mic swallowed the start of every mark** (`decisions.md` D-20,
-  `known-issues.md` D-12). Fixed by capturing from VOICE_RECOGNITION. On the four clips run
-  since: clip 01 11.1 %, clip 02 17.0 % — level with a perfect file — quiet room silent.
+- **Room noise looked like Morse to the tone lock** (`decisions.md` D-24). Fixed with a
+  steadiness test calibrated on real captures, which also hardens D-23's keying check.
+- **The phone's UNPROCESSED mic swallowed the start of every mark** (`decisions.md` D-25,
+  `known-issues.md` D-14). Fixed by capturing from VOICE_RECOGNITION.
 
-Every number from the device is reproducible on the JVM: a debug build dumps exactly what
-the mic fed the engine, and `RealAudioBench` replays the dumps bit-for-bit. **The first
-open step is a complete device run on the new source**, which gives the clean capture set
-all later decoder work should be measured against. `HistoryBench` was not run for these
-changes (it lives outside the repo, decision 6).
+Measured on the merged code against the 08-14 `main`: 14 phone captures 81.9 → 70.8 % mean,
+quiet room 13 characters → 0, new-source clips 01 / 02 at 11.1 / 17.0 % (31.1 / 25.5 before).
+The cost is synthetic: `DecoderBench` live mean 16.6 → 17.3 %, mostly `video-phone` and
+`noise-20@-5` (D-24 lists it). Every device number is reproducible on the JVM: a debug build
+dumps exactly what the mic fed the engine, and `RealAudioBench` replays it bit-for-bit.
+**Step 0 — a complete device run on the new source — is first in the plan.** `HistoryBench`
+was not run (it lives outside the repo, decision 6).
 
-## Where we are — 2026-08-05
+## Where we are — 2026-08-09
 
-Fifteen commits over eight days. Both decode paths exist and work, the app builds, and the
+Twenty-one commits over twelve days. Both decode paths exist and work, the app builds, and the
 live path handles machine-sent code across the whole bench matrix at low single-digit
 error. Four things are true at the same time:
 
 - **Machine-sent code is solved.** 11 of 16 live scenarios sit at or below 4 % CER.
-- **A rough hand-sent fist is not.** The worst scenario decodes at 65.9 % on the live path
-  and 64.6 % from a file — still two thirds wrong on both, and nothing in the system warns
-  that it is wrong.
-- **That error is attributed, and it is the speed tracker.** Step 6a handed each stage the
-  generator's ground truth in turn. Freezing the pass-2 Kalman takes the file path from
-  64.6 % to **36.7 %**; handing it a perfect element timeline is worth **1.3 points**,
-  because segmentation is already exact — 214 marks against 214 true, none fragmented,
-  merged, spurious or dropped. See N-5: the largest measured win available, and AC-6 turned
-  out to settle the design question that looked like it would block it.
-- **Nothing has ever run on a phone.** Every result is from unit tests.
+- **The file path is now as good as this architecture gets.** Step 6b (D-19) locked the
+  decode unit and the worst file scenario `hand-13-rough` fell 64.6 % → **36.7 %**, with
+  `qsb-impulse` recovering from a decline to 45.6 % as a second, unplanned win. The file mean
+  is **6.6 %**. The floor 6a measured with every stage handed the truth is 32.9 %, so there
+  is little left on this path without a better lattice.
+- **A rough hand-sent fist is still not solved on the live path.** Steps 2 (D-20) and 3
+  (D-21) took its `DecoderBench` figure 89.9 → 69.6 → **65.8 %** — chunk-invariance then a
+  periodic re-bootstrap — and corrected its reported speed from 21.9 WPM to 15.1 (true 13),
+  but it is still not a decode. The live path cannot reach the file's 36.7 % because the
+  freeze that buys it (D-19) does not transfer here (N-5).
+- **It has now run — on an emulator.** First execution 2026-08-09: it launches, takes
+  permissions, runs its service and captures audio. Two defects fell straight out (D-12,
+  D-13) and one worry closed (N-2's device half). A real microphone is still untested, which
+  is the half that matters for an app you point at a radio.
 
 | | first commit | now | source |
 |---|---|---|---|
-| Live path, mean CER | 89.7 % | **13.1 %** | `version-history.md`, D-17 |
-| Live path, worst scenario | 227 % | **65.9 %** | `version-history.md`, D-17 |
-| File path, mean CER | 21.8 % | **15.6 %** | `version-history.md` (unmoved by D-18) |
-| File path, mean CER | 21.8 % | **11.6 %** | `DecoderBench`, D-18 |
+| Live path, mean CER | 89.7 % | **12.3 %** | `DecoderBench`, D-21 |
+| Live path, `hand-13-rough` | 227 % | **65.8 %** | `DecoderBench`, D-21 |
+| File path, mean CER | 21.8 % | **6.6 %** | `DecoderBench`, D-19 |
+| File path, `hand-13-rough` | — | **36.7 %** | `DecoderBench`, D-19 |
 | Non-Morse fixtures emitting nothing | 1 of 5 | 3 of 5 | `version-history.md` |
 
-**The two file-path rows are not a contradiction and must not be reconciled by picking one.**
-They are different instruments over different text lengths; D-18 found they had been
-disagreeing about `hand-13-rough`. Quote the instrument with the number,
-always. See lesson 6 below and the caveat in `version-history.md`.
+**Quote the instrument with the number, always.** The live rows above are `DecoderBench`,
+re-measured after step 2 made the path chunk-invariant. The `HistoryBench` figures this file
+used to headline (live mean 13.1 %, worst 65.9 %) **predate step 2 and would move if
+re-run** — `HistoryBench` is not in the repo, so they cannot be, which is itself *Decisions
+needed* 6. `DecoderBench` and `HistoryBench` also use different text lengths and disagree on
+`hand-13-rough` (D-18 found this; D-19 saw it again on `hand-18`). See lesson 6 and the
+caveat in `version-history.md`.
 
-The live mean improved 7×. The worst case improved 3.4×, almost all of it in D-17, which was
-the first change to target the worst case rather than the mean. The last two changes (D-17,
-D-18) were both **deletions of a wrong assumption** rather than new machinery — a guard that
-trusted one outlier, and a veto that ranked real Morse below speech.
+The live mean improved 7×. The file mean is down to a third of the first commit. The recent
+worst-case wins came from **removing machinery — or artefacts — that were doing harm**: D-17
+discarded an outlier seed, D-18 retired an inverted veto, D-19 stopped pass 2 re-opening the
+unit pass 1 had locked, and D-20 stopped the transcript depending on the caller's buffer
+size. None added a model; each deleted an assumption.
 
 ---
 
 ## The commits
 
-Fifteen commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
-omitted; the rest are below, including the three that changed no decoder behaviour.
+Twenty-one commits in all. Two (`4fd2154`, `dddb819`) are README and UI copy only and are
+omitted; the rest are below, including the six that changed no decoder behaviour.
 
 | # | Commit | Date | Shorthand | Live mean CER after |
 |---|---|---|---|---|
@@ -97,7 +104,15 @@ omitted; the rest are below, including the three that changed no decoder behavio
 | 11 | `953baf5` | 08-03 | CLAUDE.md rewrite | — (docs only) |
 | 12 | `d08fadb` | 08-04 | D-18 file gate | 13.1 % (file path only) |
 | 13 | `5956a7e` | 08-05 | 6a residual | — (diagnostic only) |
-| 14 | *(this commit)* | 08-05 | 6b unblocked | — (docs only) |
+| 14 | `5212505` | 08-05 | 6b unblocked | — (docs only) |
+| 15 | `d0d2082` | 08-06 | D-19 6b decode lock | 13.1 % (file path only) |
+| 16 | `efdfb02` | 08-06 | N-2 sample-grid (step 2) | **12.7 %** (`DecoderBench`) |
+| 17 | `7ec06c3` | 08-07 | D-21 re-bootstrap (step 3) | **12.3 %** (`DecoderBench`) |
+| 18 | `d83d609` | 08-07 | 4a D-1 reproducer | — (tests only) |
+| 19 | `338fac4` | 08-09 | D-22 output plausibility (step 4) | 12.3 % (unchanged) |
+| 20 | `fb57b22` | 08-09 | D-9 decision | — (docs only) |
+| 21 | `018c253` | 08-09 | D-23 stalled-lock re-lock (step 5) | 12.3 % (unchanged) |
+| 24–26 | *(this merge)* | 11-09 | device runs: D-24 noise guards, D-25 mic source | 17.3 % (`DecoderBench` live; 16.6 % on the 08-14 `main`) |
 
 ### 1 · `ad5479d` — init
 
@@ -302,28 +317,75 @@ the per-character shrunk least-squares fit, is the natural source and already ex
 loses its newest entry, which is the right outcome for a question the specification had
 already settled.
 
-### 15 · *(this commit)* — first device runs: noise guards, mic source, device harness
+### 15 · *(this commit)* — D-19: pass 2 decodes with the unit locked (step 6b)
 
-**Problem.** The first run on a real phone decoded at ~84–98 % CER, and nothing in the
-suite could have predicted it: every fixture is synthetic, and the failures came from the
-room and the phone.
+**Problem.** N-5: on the file path pass 2 re-opened the unit character by character and
+followed `hand-13-rough`'s 12 % per-character bias, costing 27.9 CER points for nothing on
+the drift scenarios. FM-1 says file mode decodes with parameters already locked.
 
-**What changed.** A device harness (`DebugTap` in debug builds, `tools/device-run.sh`,
-`tools/score-device.py`, `RealAudioBench`, `NoiseFloorDiagnostic`, `PhoneClipsTool`), the
-D-19 noise guards on the live path, the D-20 switch to VOICE_RECOGNITION, and the
-`KeyingWeight` correction built but off. Also carried: the session-lifecycle fixes that
-were already in the working tree (close ends the session, Stop from the notification, no
-second capture on a second start) and three more `ResidualDiagnostic` rows.
+**What changed.** `RobustTimingDecoder.freezeDecodeUnit` locks the decode unit at pass 1's
+`u0` while the Kalman tracks on **only to report** FM-2's speed track. Two measurements shaped
+it, both refuting the plan's stated approach:
 
-**Tests.** Green; known failures D-6, D-8 ×5, D-9 and the new D-11. D-8's mixed-room test
-and D-10's test now pass — the first for a real reason, the second by avoidance, both
-recorded. AC-10's original assertion runs with two of the new guards off; the default
-behaviour has its own test. See `decisions.md` D-19 for every test that changed and why.
+- Reporting the track from `unitMsLocal` (N-5's proposal) **fails AC-6 at 42 %**, and so does
+  every other internal speed signal — with the decode frame frozen the online model absorbs
+  the sender's drift into `means[0]`, poisoning anything measured against it. The report is
+  therefore measured against the **frozen pass-1 mark centres** (`refMean0/refMean1`), which
+  restores the tracked `unitMsGlobal` — what `wpmTrack` already reads — to 8.0 % on the ramp.
+- The freeze is **raw mode only** (`prior == null`). It improves the raw decode, but on
+  `hand-18` at the AC-4 text length it strands errors the lexicon cannot flip (assisted 5.6 %
+  → 7.9 %, which fails AC-4). With the prior on, pass 2 tracks. `decisions.md` D-19.
 
-**Consequence.** Step 0 (a full device run on the new source) is first in the plan. D-12
-is fixed on the test phone; D-11 is new and Low; D-10 needs a new reproducer (step 10).
+**Measured.** `DecoderBench` file path: `hand-13-rough` **64.6 → 36.7 %**; `qsb-impulse`
+**declines → 45.6 %** at a sane 19.2 WPM (the tracker no longer runs away to the ceiling on
+the static crashes — an unplanned second win, and the D-18 `atSpeedCeiling` note is
+superseded); `hand-18` **8.9 → 11.4 %** (the cost). File mean **11.6 → 6.6 %**. Live path
+**byte-identical**, AC-3/AC-4/AC-6 green, same nine known failures. `known-issues` D-6 stays
+open — 36.7 % is a third right, and the floor for this fixture is 32.9 %.
+
+### 16 · *(this commit)* — D-20: the transcript stops depending on the buffer size (step 2)
+
+**Problem.** N-2: `feed()` reset the frame grid to the chunk boundary and evaluated the sweep
+loop off post-chunk `nowMs()`, so acquisition timing, the framing phase, and thus the whole
+transcript were functions of the caller's buffer size.
+
+**What changed.** `feed()` now processes frames and sweeps as events at absolute sample
+positions, each reading the window that ends at its own position, driven by a `curSample`
+processing cursor rather than the write head. The decode is now a pure function of the sample
+stream — asserted by a test that decodes two fixtures at 512…8192 and requires identical
+transcripts.
+
+**Measured.** Not the neutral cleanup the plan predicted. `DecoderBench` fed 4096, often the
+*worst* chunk, so the honest deterministic numbers are mostly better: live mean **14.9 →
+12.7 %**, `hand-13-rough` **89.9 → 69.6 %** (helps D-6's live figure), `noise-20@-5` **43.0 →
+1.3 %**. `hesitation` went **13.9 → 43.0 %** — but it was already 41.8 % at 2048, so 43 % is
+the truth the 4096 fluke hid, not a regression. Two `SessionSequenceTest` noise-recovery
+tests were recalibrated off the artefact; one surfaced that D-10's tone offset is common
+across seeds, not rare, so its known-failure was re-pointed off a seed that now coincidentally
+re-centres. `decisions.md` D-20.
 
 ---
+
+### 24–26 · `259c858`, `9bc263f`, *(this merge)* — first device runs, merged onto the 08-14 `main`
+
+**Problem.** The first run on a real phone decoded at ~84–98 % CER; every fixture is
+synthetic and both causes came from the room and the phone. The work was done on a checkout
+that had stopped at `5212505`, so it is merged rather than rebased: its two commits keep their
+original numbering (D-19/D-20 there are D-24/D-25 here).
+
+**What changed.** A device harness (`DebugTap`, `tools/device-run.sh`, `tools/score-device.py`,
+`RealAudioBench`, `NoiseFloorDiagnostic`, `PhoneClipsTool`, and `device-test/` with the clips
+committed), the D-24 noise guards, the D-25 switch to VOICE_RECOGNITION, and `KeyingWeight`
+built but off. The merge itself added three things: D-23's `keyedNow` takes the steadiness
+test, acquisition counts keyed sweeps within a window instead of failing on any unkeyed one,
+and the unproven-lock yield stays on because D-23 does not replace it. Also carried: the
+session-lifecycle fixes that were in that checkout's working tree.
+
+**Tests.** Green, with the same seven known failures as the 08-14 `main`. Four tests changed
+and two passed known failures resolved; `decisions.md` D-24 gives the reason for each.
+
+**Consequence.** Step 0 first. D-14 fixed on the test phone; D-10 needs a new reproducer
+(step 10).
 
 ## What the measurements taught us
 
@@ -376,20 +438,23 @@ is stated and labelled with what it rests on.
 
 | ID | Severity | Summary | Addressed by |
 |---|---|---|---|
-| `known-issues` D-1 | High | A unit-scale error scores a perfect `fit 1.00`; no quality signal can see it — **and it now has no reproducer** | 4a, then 4 |
-| `known-issues` D-2 | High | Live path decodes real hand-sent audio far worse than file import — a bad bootstrap it never revisits | 3 |
-| `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / 64.6 % (file, since D-18) | 6b — 6a attributed it to tracking |
-| **N-5** (new) | High | On the file path the pass-2 tracker costs 27.9 points and buys nothing | 6b |
+| ~~`known-issues` D-1~~ | FIXED | A unit-scale error was invisible to every quality signal — closed by `decisions.md` D-22. `fitQuality` still reads 1.00 there, and that is now understood to be *correct* | 4 |
+| `known-issues` D-11 | Medium | Nothing correlates with how wrong the decode is: 39–42 % CER at `fit 1.00` and confidence 0.978–0.990, **above** a decode four times more accurate — split out of D-1, obvious candidate ruled out | — none planned, needs G-1 |
+| `known-issues` D-2 | High | Live path decodes real hand-sent audio worse than file import — **narrowed** by D-21's re-bootstrap (speed corrected, CER 69.6 → 65.8 %), not closed: the gap needs the D-19 freeze, which cannot transfer to live | 3 (done) |
+| `known-issues` D-6 | High | A rough 13 WPM fist decodes at 65.9 % (live) / **36.7 % (file, since D-19)** | live path — 6b took the file path as far as it goes |
+| ~~**N-5**~~ | FIXED | On the file path the pass-2 tracker cost 27.9 points and bought nothing — closed by `decisions.md` D-19 | 6b |
 | `known-issues` D-8 | High | Speech and RTTY decode as Morse; the fit score cannot separate them | 7 (blocked) |
-| `known-issues` D-9 | High | A tone change mid-session strands the lock permanently | 5 (blocked) |
+| `known-issues` D-12 | High | The UI can report *Listening* with no service running — a `publish()` race found on the first device run | — none planned |
+| `known-issues` D-13 | Low | Readouts print values they do not have (`fit 1.00` over `n0`, `snr 0 dB` when idle); `emit` label clipped | — none planned |
+| ~~`known-issues` D-9~~ | FIXED | A tone change mid-session stranded the lock permanently — closed by `decisions.md` D-23. A stalled lock is handed to a distinct keyed signal after 10 s | 5 |
 | `known-issues` D-10 | Medium | Tone readout stays ~76 Hz off after recovering from a wrong lock | — none planned |
 | `known-issues` D-3 | Low | Mains veto costs tone-readout accuracy (~20 Hz), not decoding | — accepted |
 | ~~**N-1**~~ | FIXED | Bootstrap seed had no outlier protection — closed by `decisions.md` D-17 | 1 |
-| **N-2** | High | The decode depends on the caller's audio buffer size — see below | 2 |
+| ~~**N-2**~~ | FIXED | The decode depended on the caller's audio buffer size — closed by `decisions.md` D-20 (step 2) | 2 |
 | ~~**N-3**~~ | FIXED | File path declined a fit it could decode, on an inverted score — closed by `decisions.md` D-18 | 1b |
 | **N-4** (new) | Medium | `DecoderBench` and `HistoryBench` disagreed about `hand-13-rough`; nothing compared them — see lesson 6 | — undecided, see *Decisions needed* 6 |
 | `G-1` | High risk | No real recordings in the test corpus | 7 (blocked) |
-| `G-2` | High risk | Never run on a physical device | 8 (blocked) |
+| `G-2` | Medium risk | **Now run on an emulator**; a real microphone, SAF import, rotation, audio focus and Bluetooth still unexercised | 8 (partly done) |
 | `G-3` | Low | Release builds are unsigned | 9 |
 
 ### N-1 — One glitch sets the whole timebase · FIXED by D-17
@@ -432,7 +497,24 @@ This is the mechanism behind `known-issues` D-6 and D-2, and the direct cause of
 symptom. It answers the question D-6 left open — the seed is splitting on **neither** a
 dot/dash boundary **nor** the interior of the dot cluster, but on a single outlier.
 
-### N-2 — The decode depends on the caller's buffer size
+### N-2 — The decode depends on the caller's buffer size · FIXED by step 2
+
+**Closed by the sample-position rewrite (`decisions.md` D-20).** `feed()` now processes
+frames and sweeps as events at absolute sample positions, each reading the window that ends
+at its own position, so the transcript is a pure function of the sample stream. The
+invariance is asserted: `LiveEngineTest."decode is invariant to feed chunk size"` decodes two
+fixtures at 512/1024/2048/4096/8192 and requires byte-identical transcripts. The evidence
+below is kept for the record.
+
+The fix was **not** the neutral cleanup this plan predicted. `DecoderBench` had been feeding
+4096 — often, but not always, the *worst* chunk — so removing the dependence moved the live
+numbers, and mostly for the better: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 →
+69.6 %** (the honest fine-grained value, which also improves `known-issues` D-6's live
+figure), `noise-20@-5` **43.0 → 1.3 %**. Two scenarios went the other way and were exposed
+rather than caused: `hesitation` **13.9 → 43.0 %** was already 41.8 % at 2048 — the 13.9 % at
+4096 was the fluke — and two `SessionSequenceTest` noise-recovery cases had their bars
+recalibrated off the artefact (one of them surfaced that D-10's tone offset is seed-common,
+not seed-rare). Full account in `decisions.md` D-20.
 
 Found while validating N-1. Same audio, same build, same config; only the length of the
 slices handed to `feed()` changes. On `hand-13-rough`, re-measured 2026-08-04 with
@@ -471,7 +553,12 @@ scenario's worst column; at 512 the error is a third lower. And `AudioRecord` ch
 buffer size from device hardware — G-2 lists buffer sizing as unexercised, and this says it
 is not a performance detail but something that changes the transcript.
 
-### N-5 — On the file path, the pass-2 tracker is pure loss
+### N-5 — On the file path, the pass-2 tracker is pure loss · FIXED by D-19
+
+**Closed by step 6b (`decisions.md` D-19).** Pass 2 now decodes with the unit locked and the
+Kalman tracks only to report FM-2's speed track. The evidence below stands; the fix and the
+two measurements that shaped it (the `unitMsLocal` track failing AC-6 at 42 %, the raw-mode
+gating) are in D-19. Kept for the record.
 
 Found by step 6a. FM-1 says file mode fits its parameters over the whole recording and then
 decodes with them **locked**; the code then runs a Kalman in pass 2 anyway, with the comment
@@ -578,59 +665,49 @@ rests on:
 - **ready** — nothing in the way; someone can start it today
 - **blocked** — and by what: an owner decision, a toolchain gap, or another step
 
-**Three of thirteen are done, one is closed unstarted.** Of the nine still open, **five are
-ready** to start today (**6b**, 2, 4a, 3, 4) and **four are blocked** — three on an owner
-decision rather than on effort (5, 7, 9) and one on the toolchain (8). The decisions are
-collected at the foot of this file.
+**Nine of thirteen are done, one is closed unstarted.** Of the three still open, **none is
+ready**: 7 and 9 wait on an owner decision, 8 on the toolchain. Two of the six questions at
+the foot of this file are now answered — the D-9 trade (step 5, built) and the real-corpus
+decision (step 7, which needs the audio file itself before anything can start).
 
-**6b is next.** It is the largest measured win on the board — 27.9 CER points on the worst
-file scenario — and AC-6 turned out to settle the design question that was holding it, so it
-needs no decision, only care.
+**Steps 4a and 4 are both done and `known-issues` D-1 is closed.** 4a restored the
+reproducer by *injecting* the error — no synthetic fixture bootstraps one any more — pinning
+the unit an octave fast on a clean 20 WPM signal: 202 characters for 62 sent, **297.5 % CER**,
+98.5 % of it `E`/`T`/`I`/`M`, at `fit 1.00` with nothing suppressed. 4 then made that state
+visible, and the route had to be non-timing: Morse timing is **scale-free**, so no timing
+score can ever see a wrong scale. `outputImplausible` reads the decoded characters instead —
+mean marks per character, 1.03 on the reproducer against 3.4 for real text — and warns
+without suppressing (`decisions.md` D-22). No CER change on either path.
 
 | Step | What it is | Status | Effort | Expected change / improvement | Basis |
 |---|---|---|---|---|---|
-| **0** | ***(new, 2026-11-09 — do first)* Record the full device capture set on VOICE_RECOGNITION** | **to do · first** | small (~15 min, needs the phone) | No code change. Confirms D-20 across all ten clips, not four, and produces the **reference capture set** every later decoder change should be replayed against — the existing captures were made through UNPROCESSED and have D-12 baked in. Procedure below the table | measured (4 of 11 clips so far) |
+| **0** | ***(new, 2026-11-09 — do first)* Record the full device capture set on VOICE_RECOGNITION** | **to do · first** | small (~15 min, needs the phone) | No code change. Confirms D-25 across all ten clips, not four, and produces the **reference capture set** every later decoder change should be replayed against — the existing captures were made through UNPROCESSED and have D-14 baked in. Procedure: `device-test/README.md` | measured (4 of 11 clips so far) |
 | 1 | Reject a degenerate bootstrap seed | **done** · `7d1a2b5` | — | Live worst case 207.1 % → 65.9 %, live mean 21.9 % → 13.1 % | measured |
 | 1b | Port the seed guard to the file path | **done** · this commit | — | **Premise refuted.** The port itself: *no change on any fixture*. The real fix (D-18) gave file `hand-13-rough` 100 % → 64.6 %, file mean 13.8 % → 11.6 % | measured |
-| 2 | Decouple the decode from buffer size | ready | small | No CER improvement expected at all. Removes a **19-point** spread on `hand-13-rough` that is an artefact of the harness, so later live-path comparisons mean something. `clean-20` should stop moving 2.5 % ↔ 6.3 % with chunk size, and the seeded unit stop varying 53–68 ms. **Weaker than it looks:** D-17 already took this from 67 points to 19 without touching the cause | measured (N-2, re-run 08-04) |
-| 4a | Restore a reproducer for D-1 | ready | small | No behaviour change. Restores a failing test under a High defect that currently has nothing holding it | derived |
-| 3 | Re-bootstrap rather than commit once | ready | medium | Should recover the live path on a bad start. Bounded above by the file path's two-pass result on the same audio — so on `hand-13-rough`, live 89.9 % → at best ~64.6 % (`DecoderBench` ruler). Does **not** touch the residual error both paths share | derived |
-| 4 | Make a scale error visible | ready | medium | No CER improvement. Turns a silent wrong answer into a flagged one; today `fitQuality` reads 1.00 on decodes measured at 13–23 % CER and `outputSuppressed` was false in all 16 scenarios | measured |
-| 6a | Locate the residual error | **done** · this commit | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
-| 6b | *(new)* Stop the pass-2 tracker re-opening what pass 1 locked | **ready** | small–medium | **The largest measured win available: `hand-13-rough` file 64.6 % → 36.7 %**, measured, with zero cost on `drift-ramp` and `wobble`. File mean would follow to ~9.9 % (arithmetic, one row of 16). Live path unaffected. **Must keep AC-6 green** — the reported track has to stay within 10 % through a ramp, so the decode unit and the reported speed have to be separated rather than the tracker frozen | measured (N-5) |
-| 5 | The tone-jump deadlock | **blocked** · owner decision on N and the D-7 trade | small | Recovers a session that is currently dead until restarted. One `SessionSequenceTest` known failure (D-9) should start passing. Risk: AC-9 must stay green | derived |
+| 2 | Decouple the decode from buffer size | **done** · this commit (D-20) | small | **Not neutral after all.** Absolute-sample-grid processing; transcripts now byte-identical across 512…8192. `DecoderBench` fed the worst chunk, so the honest numbers improved: live mean **14.9 → 12.7 %**, `hand-13-rough` **89.9 → 69.6 %**, `noise-20@-5` **43.0 → 1.3 %**. Exposed `hesitation`'s true 43 % (was a 4096 fluke at 13.9 %) and re-pointed a D-10 known-failure | measured (D-20) |
+| 4a | Restore a reproducer for D-1 | **done** · this commit | small | **Restored by injection, not by waiting.** A unit pinned an octave fast on a clean 20 WPM signal: 202 chars for 62 sent, CER **297.5 %**, 98.5 % of it `E`/`T`/`I`/`M`, at `fit 1.00` with nothing suppressed and the lock LOCKED. No behaviour change; known failures 9 → 10 across 5 defects | measured |
+| 3 | Re-bootstrap rather than commit once | **done** · this commit (D-21) | medium | **Modest, not the 36.7 % the ceiling implied.** Batch re-fit every 16 marks, adopted in place on a material disagreement. Corrects reported speed (`hand-13-rough` 21.9 → 15.1 WPM) and CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live mean 12.7 → **12.3 %**; fires on nothing healthy. Capped short of the file's 36.7 % because the D-19 freeze cannot transfer to live (N-5) — the tracker resumes chasing bias | measured (D-21) |
+| 4 | Make a scale error visible | **done** · this commit (D-22) | medium | **As predicted: no CER change, a silent wrong answer is now a flagged one.** Marks per committed character over a 48-char window, flagged below 1.9; fires on the D-1 reproducer at 1.03, on none of the 16 healthy scenarios. `DecoderBench` byte-identical. Margin **1.50×**, and it *inverts* at a 16-char window — the long window is the finding. Reports only, never suppresses. Closes `known-issues` D-1; opens D-11 | measured (D-22) |
+| 6a | Locate the residual error | **done** · `5956a7e` | — | **Answered: tracking, 27.9 points.** Segmentation is exact (214/214, zero defects) and worth 1.3. Produced N-5 and step 6b, and closed step 6 | measured |
+| 6b | Stop the pass-2 tracker re-opening what pass 1 locked | **done** · this commit (D-19) | small–medium | **Landed: `hand-13-rough` file 64.6 % → 36.7 %; `qsb-impulse` declines → 45.6 %; file mean 11.6 % → 6.6 %.** Live path byte-identical, AC-6 held (8.0 %). Cost 2.5 pts on `hand-18` (short text), so gated to raw mode to keep AC-4. The `unitMsLocal` track the plan named fails AC-6 at 42 % — the report is measured against the frozen pass-1 centres instead | measured (D-19) |
+| 5 | The tone-jump deadlock | **done** · this commit (D-23) | small | **A stranded session recovers: 2 chars at 98.4 % CER → 88 at 11.9 %**, consistent across four jump targets, one re-lock each, first transmission untouched. `DecoderBench` identical to its `noStall` ablation. Cost three corrections found by broken tests — the keying test must ignore its own ablation switch, the current lock must be silent (AC-9), and the target must be a sustained candidate not a single sweep. Closes `known-issues` D-9; the re-lock still lands 19–42 Hz off (D-10) | measured (D-23) |
 | 6 | Soft-decision front end | **closed** · not justified on current evidence | large | **Ceiling measured at 1.3 points.** The front end produces 214 marks against 214 true with zero defects; perfect runs move CER 64.6 % → 63.3 %. Reopen only if G-1 shows a real recording where the front end is at fault | measured |
 | 7 | Real corpus | **blocked** · owner decision on committing binary audio | medium | No immediate CER change; the numbers may get *worse* and more honest. Unblocks the D-8 structure gate, which is measured, works on 6 of 7 fixtures, and cannot be trusted on synthetics alone | measured (lesson 5) |
-| 8 | Run it on a device | **blocked** · no `cmdline-tools`, no AVD | large | Unknown, and the largest unknown in the project. Buffer sizing alone changes the transcript (N-2); `AudioFileImporter` returns silence rather than an error on float PCM | derived |
+| 8 | Run it on a device | **partly done** · emulator, this commit | large | **Premise refuted — an AVD was already installed and nothing was blocked.** The app ran for the first time: launch, permissions, foreground service, mic capture and stop all verified. Found `known-issues` **D-12** (UI reports Listening with no service — High) and **D-13**. Closed N-2's device-side worry: `MicCapture` feeds a fixed 80 ms chunk regardless of `getMinBufferSize`. G-2 High → Medium. A real microphone, SAF import, rotation, audio focus and Bluetooth remain | measured |
 | 9 | Signing config | **blocked** · owner decision on keystore location | small | No decode change. `assembleRelease` currently produces an APK that will not install | measured |
-| 10 | *(new, 2026-11-09)* Find a new reproducer for `known-issues` D-10 | **to do** · owner asked to keep it on the list | small | No behaviour change. The old fixture passes by avoidance since `decisions.md` D-19; D-10's remaining case — a lock that **has** decoded, sitting more than 40 Hz from the real tone — has no test holding it. Candidate fixtures: a non-ragged noise lock (the steady fading carrier of D-11 is one) followed by Morse 50–80 Hz away; or a phone capture where that happens | derived |
+| 10 | *(new, 2026-11-09)* Find a new reproducer for `known-issues` D-10 | **to do** · owner asked to keep it on the list | small | No behaviour change. The old fixture passes by avoidance since `decisions.md` D-24; D-10's remaining case — a lock that **has** decoded, sitting more than 40 Hz from the real tone — has no test holding it. Candidate fixtures: a non-ragged lock that decodes (a slowly fading pure tone, like `LiveEngineTest`'s ambient fixture) followed by Morse 50–80 Hz away; or a phone capture where that happens | derived |
 
 ### Step 0 — procedure
 
-On any machine with the repo, Android platform-tools and a phone on USB:
+Everything needed is in the repo: `device-test/README.md` has the Windows steps, and the
+clips are in `device-test/clips/` (byte-identical to the ones `PhoneClipsTool` generates).
+Record the result in `version-history.md` against the commit it ran on.
 
-1. `PHONE_CLIPS_OUT=<clips> ./gradlew :core:test --tests "*PhoneClipsTool*"` — writes the
-   ten clips, a 30 s silent clip, `truth.tsv` and `cases.tsv`. Deterministic: byte-identical
-   to the clips used on 2026-11-09.
-2. `./gradlew :app:assembleDebug` and `adb install -r app/build/outputs/apk/debug/app-debug.apk`
-   — must be a **debug** build; the capture dump and event log are inert in release.
-3. Phone unlocked, 30–50 cm from the speakers, normal volume, quiet room; no
-   `audio_source_*` marker left in the app's files directory (so the default source runs).
-4. `tools/device-run.sh <clips>/run <clips>/*.wav` — about 15 minutes for the set. Plays
-   each clip, saves the app's log, a screenshot and the mic dump per clip. Playback uses
-   PowerShell, so on a non-Windows machine swap that one line for `aplay`/`afplay`.
-5. Score what the phone did: `python tools/score-device.py <clips>/run <clips>/truth.tsv`.
-6. Replay on the JVM, which must match step 5:
-   `REAL_DIR=<clips> ./gradlew :core:test --tests "*RealAudioBench*" -i`.
-
-Record the result in `version-history.md` against this commit. To compare mic sources on a
-new phone, create `audio_source_MIC` (or `_CAMCORDER`, `_UNPROCESSED`,
-`_VOICE_RECOGNITION`) in `/sdcard/Android/data/com.morsedecoder.app/files/` before a run.
-
-**No step here closes `known-issues` D-6.** 6b takes the file path to 36.7 %, which is a
-large improvement and still not "decoded". 6a measured the floor this architecture reaches
-on that fixture with every stage handed the truth: **32.9 %**. Below that needs a better
-lattice or better mark/gap models under jitter, and nobody has proposed either.
+**No step here closes `known-issues` D-6.** 6b took the file path to 36.7 %, which is a
+large improvement and still not "decoded", and left the live path untouched at 89.9 %. 6a
+measured the floor this architecture reaches on that fixture with every stage handed the
+truth: **32.9 %**. Below that needs a better lattice or better mark/gap models under jitter,
+and nobody has proposed either.
 
 And **no step improves the mean much**, because the mean is already carried by eleven
 scenarios at or below 4 %. Everything left is worst-case and honesty work.
@@ -695,52 +772,172 @@ Three things this did not do: the live path is untouched, `known-issues` D-6 sta
 64.6 % file / 89.9 % live, and D-8 is no closer — the impostors above were never caught by
 this gate and still are not.
 
-### Step 2 — Decouple the decode from the buffer size · small · fixes N-2
+### Step 2 — Decouple the decode from the buffer size · **DONE** · `decisions.md` D-20
 
-Frame the envelope on an absolute sample grid rather than resetting to the chunk boundary,
-and drive the sweep clock off frame positions rather than post-chunk `nowMs()`. Then assert
-it: decode one fixture at 512/1024/2048/4096/8192 and require the transcripts to match.
+`feed()` processes frames and sweeps as events at absolute sample positions, each reading the
+window ending at its own position, driven by a `curSample` cursor. The transcript is now a
+pure function of the sample stream — `LiveEngineTest."decode is invariant to feed chunk size"`
+decodes two fixtures at 512…8192 and requires them byte-identical. The measured consequence
+(the live path shifted off the 4096 artefact, mostly better) and the two recalibrated
+recovery tests are in D-20. Done before step 3 precisely so step 3's before/after means
+something.
 
-This is worth doing before any further tuning, because until it is done every bench number
-carries an unknown component that is an artefact of the harness rather than the decoder.
+### Step 3 — Re-bootstrap rather than commit once · **DONE** · `decisions.md` D-21
 
-### Step 3 — Re-bootstrap rather than commit once · medium · `known-issues` D-2
+A periodic batch re-fit (every 16 marks, 2-means over the last 48), adopted **in place** on a
+material disagreement with the tracked unit. The clustering is segmentation-free, so it sees a
+correction the streaming tracker — mis-segmenting under a wrong unit — cannot.
 
-Steps 1 and 2 make a bad start less likely; they do not make it recoverable. A periodic
-batch re-fit over a recent window, adopted when it disagrees materially with the tracked
-unit, would recover from a bad start without abandoning the streaming architecture. This is
-also `known-issues` D-1's third candidate direction — a large streaming-vs-batch
-disagreement is itself the degraded-state signal the system currently lacks.
+The ceiling the plan quoted (the file's 36.7 %) turned out unreachable, and the reason is
+instructive: the file path only reaches 36.7 % by *freezing* the unit (D-19), and N-5 already
+established the freeze cannot transfer to the live path. So the re-bootstrap corrects the unit,
+the tracker resumes chasing the fist's per-character bias, and the decode re-degrades. Measured
+result: reported speed 21.9 → 15.1 WPM, CER 69.6 → **65.8 %**, `hesitation` 43.0 → 39.2 %, live
+mean 12.7 → **12.3 %**, with **zero** firings on any healthy scenario (`clean-20`, `hand-18`,
+`drift-ramp`, `wobble`, the tone cases). A real but modest win, and the mechanism's real test —
+a recording worse than any synthetic — is G-1, still blocked. Full record in D-21.
 
-### Step 4a — Restore a reproducer for D-1 · small · **new, and it should come first**
+Also `known-issues` D-1's third candidate direction: a large streaming-vs-batch disagreement is
+itself the degraded-state signal the system lacked, and the re-fit now computes it every 16
+marks.
+
+### Step 4a — Restore a reproducer for D-1 · **DONE** · this commit
 
 D-17 removed the only input that produced a scale error, so `@KnownFailure("D-1")` started
 passing — **not because anything detected the error, but because the error stopped
-happening**. The annotation has been removed and the test now guards D-17. A probe over
-dash-heavy and dot-heavy openings could not construct a replacement.
+happening**. A probe over dash-heavy and dot-heavy openings could not construct a
+replacement, so the reproducer is now *injected* rather than waited for, through FR-9.5's
+WPM pin: a clean 20 WPM signal decoded against a unit pinned at 40.
 
-D-1 is a High defect that now has nothing failing to hold it. Restore one by injecting a
-known-wrong unit directly, or from the real corpus (G-1) — the real recording still reads
-30.6 WPM against a true 17.7. Until then the capability gap is real and unguarded, and
-`fitQuality` still reports **1.00 on decodes measured at 13–23 % CER**.
+| | pinned 40 WPM | unpinned |
+|---|---|---|
+| characters emitted (62 sent) | **202** | 61 |
+| CER | **297.5 %** | 2.5 % |
+| transcript is `E`/`T`/`I`/`M` | **98.5 %** | 21 % |
+| `fitQuality` | **1.00** (64 samples, p10 = p50 = 1.00) | 1.00 |
+| `outputSuppressed` / `lockState` | **false** / LOCKED | false / LOCKED |
 
-### Step 4 — Make a scale error visible · medium · `known-issues` D-1
+No behaviour changed; the known-failure count goes 9 → **10 across 5 defects**. Two tests,
+separated on purpose: one asserts the **premise** (CER > 0.5, so it survives any legitimate
+fix and fails loudly if the scale error stops happening — which is exactly how the last
+reproducer evaporated unnoticed), the other is the `@KnownFailure("D-1")` asserting the
+**defect** (the gate fires, or `fitQuality` falls to at least its own 0.35 suppression
+threshold).
 
-Today an octave-type unit error is invisible to every quality signal: `fitQuality` reads
-1.00, and `outputSuppressed` was false in all 16 bench scenarios. Cheapest candidate is
-scoring the decoded alphabet distribution — a transcript that is 90 % `E`/`T`/`I`/`M` is
-prima facie a scale error, real text is not — which is independent of timing and cannot be
-fooled by the clusters looking clean. Even if steps 1–3 fix the cause, the system should be
-able to say when it has one.
+Three things the measurement added beyond restoring the guard:
 
-### Step 5 — The tone-jump deadlock · small, but blocked · `known-issues` D-9
+- **The pin is a vehicle, not the defect.** `fitQuality` is scale-invariant *by
+  construction* — `ObservationFit` clusters normalised durations `ln(duration / unit)`, and
+  separation × ratio × tightness are all unchanged by a uniform `ln 2` shift. Where the
+  wrong unit came from cannot matter.
+- **The error is asymmetric.** Pinned slow the lattice's shrinkage absorbs it (10 WPM
+  against a true 20 gives 15.2 % CER; 13.3 WPM gives 2.5 %, identical to unpinned); pinned
+  fast it shatters (30 → 38.0 %, 40 → 297.5 %, 53 → 310.1 %). Only 6.7 WPM trips the gate,
+  and on a shape error rather than a scale one.
+- **A pin disables D-21's re-fit** (FR-9.5 owns the unit while pinned), so the streaming-vs-batch
+  disagreement — D-1's third candidate direction, and the one step 3 made available for free —
+  is not computed in precisely the state that needs it.
 
-Fix is understood and contained: re-lock only if the current lock has produced nothing for
-N seconds **and** a keyed peak exists elsewhere in the band. Safe for AC-9 because silence
-offers no keyed peak. **Needs an owner decision** on N and on whether to accept the D-7
-trade — extending recovery to proven locks means a lock could be taken away during a
-legitimate pause if another station is active. Not started for that reason, not for
-difficulty.
+### Step 4 — Make a scale error visible · **DONE** · `decisions.md` D-22
+
+`OutputPlausibility` averages the **marks per committed character** over the last 48
+characters — near 3.4 on real text, 1.0 when the timebase is an octave out — and
+`outputImplausible` reports when it falls below 1.9, on both paths, with a banner on the
+live screen and a line in the import summary. `known-issues` D-1 closes.
+
+**Why no timing signal could ever have done it.** Morse timing is scale-free: marks are 1
+and 3 units, gaps 1, 3 and 7, and every one is a ratio, so doubling the unit preserves all
+of them. `fitQuality` reads 1.00 on the 297 % decode because the honest answer to its
+question — does my two-cluster model fit my own measurements — really is yes. That kills
+both of the timing cross-checks D-1 listed as candidates, and leaves the decoded characters
+as the only place the scale-freedom breaks.
+
+**The measurement changed the design twice.** The plan named the alphabet distribution;
+marks-per-character is the same idea with a natural expected value, and separates slightly
+wider. More importantly the margin is much narrower than a whole-transcript statistic
+suggests, because a live flag judges a *rolling window*:
+
+| window | healthy min | scale-error max | margin |
+|---|---|---|---|
+| 16 | 1.13 | 1.19 | **0.95× — inverted** |
+| 32 | 1.88 | 1.38 | 1.36× |
+| **48** | **2.38** | **1.58** | **1.50×** |
+
+At 16 characters a healthy `hesitation` decode dips *below* a genuine scale error on a rough
+fist — lesson 5 arriving on schedule. Window length is the whole story; an EWMA of the same
+length gives 1.53×. The long window is affordable because the failure fills it fast: a scale
+error emits 3–4× as many characters per second (202 against 61 on the same audio).
+
+**It reports and never suppresses**, which is the more important half of the decision. The
+two rows binding the margin are the two most human fixtures in the corpus (`hesitation` 2.38,
+`hand-13-rough` 2.60), so a gate here is the D-8 inversion waiting to happen; and after 48
+characters the wrong output is already emitted, which P-2 forbids retracting. A separate test
+holds the false-positive side on both binding fixtures.
+
+`DecoderBench` byte-identical on both paths, as an additive statistic must be.
+
+**What it does not catch, and what it opened.** A unit that is too *long* merges characters
+instead of shattering them, moving the statistic up into the range real text occupies (3.73
+against a healthy max of 3.44) — this is one-sided, fast-side only. And it says nothing about
+ordinary wrongness: `hesitation` at 39.2 % CER and `qsb-impulse` at 41.8 % have normal
+character shapes, `fit 1.00`, and mean lattice confidence **0.978 / 0.990** — higher than the
+0.943 of a `hand-18` decode four times more accurate. That residual was the second half of
+D-1 and is now `known-issues` **D-11**, with its obvious candidate measured and ruled out.
+
+### Step 5 — The tone-jump deadlock · **DONE** · `decisions.md` D-23
+
+**Decided and built 2026-08-09.** Re-lock **automatically** when the current lock has produced nothing
+for **10 s** *and* a peak elsewhere in the band passes D-13's keying test. The owner accepts
+the D-7 trade: a proven lock can now be taken away during a legitimate pause if another
+station is keying at the time.
+
+Safe for AC-9 by conjunction, not by the timer: 30 s of silence offers no keyed peak, so the
+second condition never holds. Note the timer alone would *not* be safe, which is why the
+keying test is load-bearing rather than a formality — 10 s is inside the range a very slow
+Farnsworth sender can leave between words.
+
+Three things measurement says the implementation must get right:
+
+- **The keying test is not the candidate test.** `candidates` (FR-2.14) is 6 dB + 100 Hz +
+  2 s sustain with no keying check, and a probe of a *healthy* 612 Hz decode shows it
+  offering spurious peaks at 1680, 840, 435, 381 and 1017 Hz throughout. Gating on the
+  candidate list would let room noise steal a working lock. Use `keyingSpreadAt` (D-13).
+- **It must count committed characters, not elements.** In the stranded state the front end
+  still produces elements from noise at the dead frequency; `charsSinceLock` is the counter
+  that actually stays put.
+- **Expect to land off-tone.** In the measured jump the candidate readings jitter ±45 Hz
+  around the true 1150 Hz, so the re-lock will acquire ~40 Hz off and `known-issues` D-10
+  says the tracking EMA cannot re-centre from there. The decode should survive — the
+  analysis window is ~100 Hz wide — but the `tone` readout will be wrong, and the D-9 test
+  asserts `abs(toneHz - 1150) < 25`. That assertion may need to move, or D-10 may need to be
+  fixed first; establish which before changing the number.
+
+**Measured**, by ablation on one build (`noStall` is the new `DecoderBench` variant):
+
+| jump from 612 Hz | before | after |
+|---|---|---|
+| → 1150 Hz | 2 chars, 98.4 % CER | **88 chars, 11.9 %** |
+| → 900 Hz | 2 chars, 98.4 % | **88 chars, 11.9 %** |
+| → 1600 Hz | 2 chars, 98.4 % | **90 chars, 12.7 %** |
+| → 420 Hz | 2 chars, 98.4 % | **88 chars, 12.7 %** |
+
+First transmission untouched in both arms (96 characters, 4.0 %), one re-lock per recovery.
+The residual ~12 % is the 10 s spent proving the lock is dead plus the re-bootstrap after it.
+`DecoderBench` identical to `noStall` on all 16 scenarios — mean 12.3 %, worst 65.8 % — since
+no bench scenario contains a tone jump. Known failures 10 → **9 across 4 defects**.
+
+**All three warnings above were justified by breakage, and the third was wrong about the
+cause.** The keying ablation hole broke two D-13 control arms. The distance rule broke AC-9 —
+0.6 s after the *same station* resumed from a 30 s pause, its own sideband 40.4 Hz away took
+the lock — and the fix for that was not distance but requiring the current lock to be silent.
+The `hand-13-rough` cost was real (65.8 → 67.1 %) but not the predicted D-10 interaction: a
+one-sweep transient at 731 Hz out-ranked the true signal. Requiring an established FR-2.14
+candidate removed it, and the fixture is now byte-identical to the off arm. Full account in
+D-23.
+
+**Not fixed:** the re-lock lands **19–42 Hz** off the new tone and D-10 says the EMA cannot
+re-centre from there. The regression test passes at 18.7 Hz against its own 25 Hz bar — a thin
+margin against an open defect.
 
 ### Step 6a — Locate the residual error · **DONE** · `ResidualDiagnostic`
 
@@ -785,10 +982,22 @@ What remains after every stage is given the truth is **32.9 %**, which is the la
 the mark/gap models under 25 % jitter. That is the floor this architecture reaches on this
 fixture, and it is where any further D-6 work has to go once N-5 is dealt with.
 
-### Step 6b — Stop the pass-2 tracker re-opening what pass 1 locked · **new, from 6a** · N-5
+### Step 6b — Stop the pass-2 tracker re-opening what pass 1 locked · **DONE** · `decisions.md` D-19
 
-The highest-leverage item on this list, and it came out of a measurement rather than a
-plan. See N-5 for the evidence and the spec tension it has to resolve.
+`RobustTimingDecoder.freezeDecodeUnit` locks the decode unit at pass 1's `u0` while the
+Kalman tracks on only to report FM-2's speed track. The full argument, and the two
+measurements that both refuted the approach this plan had written down, are in D-19:
+
+- **The `unitMsLocal` track fails AC-6 at 42 %** — and so does every other signal the decoder
+  produces, because with the frame frozen the online model absorbs the drift into `means[0]`.
+  The report is measured against the frozen pass-1 mark centres instead, restoring the tracked
+  `unitMsGlobal` (what `wpmTrack` already reads) to 8.0 % on the ramp.
+- **Raw mode only.** The freeze strands errors the lexicon cannot flip on `hand-18`, failing
+  AC-4; with the prior on, pass 2 tracks. `Ac6TrackDiagnostic` is the instrument.
+
+Measured: file `hand-13-rough` 64.6 → 36.7 %, `qsb-impulse` declines → 45.6 % (an unplanned
+second win — the tracker no longer runs away to the ceiling on the static crashes), file mean
+11.6 → 6.6 %, live path byte-identical. `known-issues` D-6 stays open at the 32.9 % floor.
 
 ### Step 6 — Soft-decision front end · large · `prior-art.md` idea 1 · **not justified**
 
@@ -806,20 +1015,44 @@ not to the front end. **Do not start this on synthetic evidence.** It may still 
 a real recording, where the envelope is not a clean +5 dB synthetic — but that is G-1's
 question, and this step should stay closed until G-1 can pose it.
 
-### Step 7 — Real corpus · blocked on a decision · `G-1`
+### Step 7 — Real corpus · **decided, blocked on the file itself** · `G-1`
 
 Every fixture is synthetic, and lesson 5 above shows synthetic-only tuning produces
 confidently inverted thresholds. One real recording exists and is not committed; a ~20 s
-16 kHz mono excerpt is about 640 kB. **Needs a decision** on committing binary audio, and a
-ground-truth transcript that does not yet exist — only fragments are legible (`ALL BEST`, a
-callsign, `DL4`). A weaker tone-lock-plus-character-count assertion is possible today and
-would be better than nothing. This gates the D-8 structure gate, which is measured, works
+16 kHz mono excerpt is about 640 kB. **Decided 2026-08-09:** commit a ~20 s excerpt, and assert
+**anchors plus no-inversion guards** rather than a transcript — the legible fragments
+(`ALL BEST`, `DL4`, the callsign), a tone lock near 1882 Hz, a speed near 17.7 WPM, and the
+part that pays for D-8: that this recording scores **above every non-Morse fixture** on any
+gate we add. No invented transcript.
+
+**Still blocked, but on the file rather than a decision.** The recording is not in the tree,
+not in git history, and no path for it is documented; every number quoted against it in
+`known-issues.md` was measured in an earlier session against a machine-local copy. Nothing
+here can start until it is supplied. This gates the D-8 structure gate, which is measured, works
 on 6 of 7 non-Morse fixtures, and is deliberately unimplemented until its margins can be
 established against more than one real transmission.
 
-### Step 8 — Run it on a device · blocked on toolchain · `G-2`
+### Step 8 — Run it on a device · **partly done, emulator only** · `G-2`
 
-No `cmdline-tools` and no AVD are configured, so no build of this app has ever executed.
+**The blocker was never real.** An AVD (`Medium_Phone_API_36.1`) and its system image were
+already installed; only `cmdline-tools` is missing, and that provides `sdkmanager` /
+`avdmanager`, which manage SDK packages and are not needed to build, install or run. Like
+step 1b, this entry asserted a premise nobody had checked.
+
+**The app ran for the first time on 2026-08-09** (emulator, API 36). It launches, renders,
+takes both permissions in sequence, runs its foreground service with `types=0x80`, captures
+from the microphone, and stops cleanly — the full table is in `known-issues` G-2, now
+downgraded to Medium.
+
+Two defects came straight out of it, neither reachable from the JVM suite: **D-12**, the UI
+reporting *Listening* with no service running — a `publish()` race that re-asserts the flag
+after `onDestroy` — and **D-13**, readouts printing values they do not have. And **N-2's
+device-side worry is closed**: `MicCapture` feeds a fixed 80 ms chunk regardless of
+`getMinBufferSize`, so the hardware buffer never reaches the decoder at all.
+
+What the emulator cannot answer is the part the app exists for — a real microphone, with a
+real noise floor, pointed at a radio. That plus SAF import, rotation, audio focus and
+Bluetooth routing is the remaining half, and it needs a handset.
 Entirely unexercised: microphone capture and `AudioRecord` buffer sizing (see N-2), the
 foreground service and wakelock, runtime permissions, SAF import through `MediaCodec`,
 audio focus, Bluetooth routing, and every Compose layout at a real screen size.
@@ -838,12 +1071,17 @@ its passwords live is the owner's decision.
 
 These block work that is otherwise ready. Listed so they can be answered together.
 
-1. **D-9 re-lock trade** (step 5) — value of N, and whether to accept that a proven lock can
-   be taken away during a legitimate pause.
-2. **Committing real audio** (step 7) — binary in the repo, and how to establish ground
-   truth for a recording that is only partly legible.
-3. **Toolchain for device runs** (step 8) — installing `cmdline-tools` and an AVD, or
-   sideloading to a physical handset.
+1. ~~**D-9 re-lock trade** (step 5)~~ — **ANSWERED 2026-08-09: automatic re-lock, N = 10 s,
+   and the owner accepts the D-7 trade.** Written up in step 5 below; step 5 is now ready.
+2. ~~**Committing real audio** (step 7)~~ — **ANSWERED 2026-08-09: commit a ~20 s excerpt,
+   and assert anchors plus no-inversion guards rather than a transcript.** Step 7 is written
+   up below and is **not** ready: nobody has supplied the file. It is not in the tree, not in
+   git history, and no path for it is documented — the numbers quoted against it throughout
+   `known-issues.md` were measured in an earlier session on a machine-local copy.
+3. ~~**Toolchain for device runs** (step 8)~~ — **ANSWERED 2026-08-09: emulator first, then a
+   handset; full G-2 sweep.** The emulator half is done (see step 8). **The question's premise
+   was false** — an AVD and its system image were already installed and nothing was blocked.
+   What remains needs a physical phone attached over USB with debugging enabled.
 4. **Keystore location** (step 9).
 5. **§8 of the requirements is still open** — export-with-audio and practice mode remain
    unspecified.
